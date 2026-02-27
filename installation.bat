@@ -18,7 +18,7 @@ set "INSTALL_DIR=%ProgramData%\Swapster"
 set "APP_DST=%INSTALL_DIR%\swapster.exe"
 set "TASK_LOGON=Swapster"
 set "TASK_UNLOCK=Swapster_Unlock"
-set "ARG1=5555"
+set "ARG1=2003"
 REM ==================
 
 REM Verify source

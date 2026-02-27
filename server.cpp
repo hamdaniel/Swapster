@@ -10,6 +10,10 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+#include <windows.h>
+#include <shellapi.h>
+#include <string>
+
 static bool IsWorkstationLocked_ByDesktopName() {
     // Open the currently active desktop (the one receiving user input)
     HDESK hDesk = OpenInputDesktop(0, FALSE, GENERIC_READ);
@@ -32,9 +36,44 @@ static bool IsWorkstationLocked_ByDesktopName() {
     return locked;
 }
 
-#include <windows.h>
-#include <shellapi.h>
-#include <string>
+static bool handle_magic_probe(SOCKET c) {
+    static const char kMagic[] = "swapsterswapster"; // 16 bytes
+    const DWORD deadline_ms = GetTickCount() + 250;  // small pre-handshake window
+
+    while (GetTickCount() < deadline_ms) {
+        // Wait up to 50ms for data to become readable
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(c, &rfds);
+
+        timeval tv{};
+        tv.tv_sec = 0;
+        tv.tv_usec = 50 * 1000;
+
+        int sel = select(0, &rfds, nullptr, nullptr, &tv);
+        if (sel <= 0) continue; // timeout or error -> keep trying until deadline
+
+        // Data is readable; only proceed if we have at least 16 bytes buffered
+        u_long avail = 0;
+        if (ioctlsocket(c, FIONREAD, &avail) != 0) return false;
+        if (avail < 16) continue;
+
+        char buf[16];
+        int r = recv(c, buf, 16, MSG_PEEK);
+        if (r != 16) return false;
+
+        if (memcmp(buf, kMagic, 16) == 0) {
+            // consume + echo + tell caller to close
+            recv(c, buf, 16, 0);
+            send(c, buf, 16, 0);
+            return true;
+        }
+
+        return false; // first 16 bytes are not magic -> proceed with normal handshake
+    }
+
+    return false; // no early client data -> proceed with normal handshake (server sends nonce first)
+}
 
 static bool is_admin() {
   BOOL isAdmin = FALSE;
@@ -151,6 +190,12 @@ int main(int argc, char** argv) {
     if (c == INVALID_SOCKET) continue;
 
     std::cout << "Client connected\n";
+
+    if (handle_magic_probe(c)) {
+        closesocket(c);
+        std::cout << "Magic probe handled\n";
+        continue;
+    }
 
     CryptoChannel ch;
     if (!ch.init_server(c)) {
