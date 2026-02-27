@@ -9,6 +9,31 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+
+void print_welcome() {
+  std::cout << "\x1b[38;2;255;232;31m";
+  std::cout << R"(
+================================================================================================
+     _______.____    __    ____  ___      .______     _______.___________. _______ .______     
+    /       |\   \  /  \  /   / /   \     |   _  \   /       |           ||   ____||   _  \    
+   |   (----` \   \/    \/   / /  ^  \    |  |_)  | |   (----`---|  |----`|  |__   |  |_)  |   
+    \   \      \            / /  /_\  \   |   ___/   \   \       |  |     |   __|  |      /    
+.----)   |      \    /\    / /  _____  \  |  |   .----)   |      |  |     |  |____ |  |\  \----
+|_______/        \__/  \__/ /__/     \__\ | _|   |_______/       |__|     |_______|| _| `._____|                           
+
+================================================================================================
+                                  SWAPSTER SECURE SESSION
+================================================================================================
+  Encrypted session established.
+  Type commands and press Enter.
+  SWAP: Swap the contents of the displays in the target computer
+  EXIT: Disconnect from server
+  TERM: Kill the server process on the target computer 
+================================================================================================
+)";
+  std::cout << "\x1b[0m";
+}
+
 static SOCKET connect_to(const char* ip, int port) {
   SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (s == INVALID_SOCKET) return INVALID_SOCKET;
@@ -24,6 +49,7 @@ static SOCKET connect_to(const char* ip, int port) {
 }
 
 int main(int argc, char** argv) {
+  print_welcome();
   if (argc != 3) {
     std::cerr << "Usage: client.exe <server_ipv4> <port>\n";
     return 1;
@@ -53,24 +79,39 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::cout << "Connected. Type a line and press Enter. Ctrl+Z then Enter to quit.\n";
+  print_welcome();
 
   std::string line;
   while (std::getline(std::cin, line)) {
+    if (line == "EXIT") break;
+    if (line == "TERM") {
+      std::cout << "Are you sure you want to kill the server process? Type 'YES' to confirm: ";
+      std::string confirm;
+      std::getline(std::cin, confirm);
+      if (confirm == "YES") {
+        line = "TERM";
+      } else {
+        std::cout << "Termination cancelled.\n";
+        continue;
+      }
+    }
     std::vector<uint8_t> pt(line.begin(), line.end());
 
     if (!ch.send_msg(s, pt)) {
       std::cerr << "Send failed\n";
       break;
     }
-
+    if(line == "TERM") {
+      std::cout << "Termination command sent. Exiting client.\n";
+      break;
+    }
     std::vector<uint8_t> echo_pt;
     if (!ch.recv_msg(s, echo_pt)) {
       std::cerr << "Receive failed\n";
       break;
     }
 
-    std::cout << "echo: " << std::string(echo_pt.begin(), echo_pt.end()) << "\n";
+    std::cout << std::string(echo_pt.begin(), echo_pt.end()) << "\n";
   }
 
   closesocket(s);

