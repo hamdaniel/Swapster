@@ -73,8 +73,6 @@ When `TERM` is sent:
 - Deletes the currently running server executable path
 - Removes `%ProgramData%\Swapster`
 
-If server was started via installer, this removes the ProgramData-installed copy, not the distribution copy in [SwapsterInstaller](SwapsterInstaller).
-
 ## Notes
 
 - LAN discovery probes hosts using ARP/ping + `ncat` magic probe.
