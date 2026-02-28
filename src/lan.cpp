@@ -1,4 +1,4 @@
-#include "network_map.h"
+#include "lan.h"
 #include <winsock2.h>
 #include <windows.h>
 #include <iphlpapi.h>
@@ -13,7 +13,7 @@
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
 
-namespace network_map {
+namespace lan {
 
 // Helper: convert IPv4 address bytes to dotted string
 static std::string IPToString(unsigned char a, unsigned char b, unsigned char c, unsigned char d) {
@@ -217,4 +217,4 @@ std::string SendString(const std::string& ip, int port, const std::string& data)
     return std::string(buf, read);
 }
 
-} // namespace network_map
+} // namespace lan

@@ -8,68 +8,78 @@ ENC_CXXFLAGS   := -O2 -std=gnu++14
 SERV_CXXFLAGS  := -O2 -std=gnu++14
 CLNT_CXXFLAGS  := -O2 -std=gnu++17
 SWAP_CXXFLAGS  := -O2 -std=c++11
+INCLUDE_FLAGS  := -Iinclude
 
 # Optional logging flag: make L=1
 ifdef L
 SERV_CXXFLAGS += -DLOG
 endif
 
-ENC_O  := encryption.o
-SWAP_O := swapster.o
-NETMAP_O := network_map.o
+OBJ_DIR := obj
+SRC_DIR := src
+INC_DIR := include
+SCRIPTS_DIR := scripts
 
-SERVER := swapster.exe
-CLIENT := client.exe
+ENC_O        := $(OBJ_DIR)/encryption.o
+SWAP_O       := $(OBJ_DIR)/swapping.o
+LAN_O        := $(OBJ_DIR)/lan.o
 
 # Installer output
-DIST_DIR := SwapsterInstallation
-INSTALL_BAT := installation.bat
+DIST_DIR := SwapsterInstaller
+INSTALL_BAT := $(SCRIPTS_DIR)\installer.bat
+SWAPSTER := $(DIST_DIR)\swapster.exe
+CLIENT := $(DIST_DIR)\controller.exe
 
-# Server version resource only
-SERVER_RC := server_version.rc
-SERVER_VER_O := server_version.o
+# swapster version resource only
+SWAPSTER_RC := swapster_version.rc
+SWAPSTER_VER_O := $(OBJ_DIR)/swapster_version.o
 
 # Link libs
-SERVER_LIBS := -lws2_32 -ladvapi32 -lgdi32
+SWAPSTER_LIBS := -lws2_32 -ladvapi32 -lgdi32
 CLIENT_LIBS := -lws2_32 -ladvapi32 -liphlpapi
 
 .PHONY: all clean rebuild dist
 
-all: $(SERVER) $(CLIENT) dist
+all: $(SWAPSTER) $(CLIENT) dist
+
+$(OBJ_DIR):
+	mkdir $(OBJ_DIR) 2>NUL || exit 0
+
+$(DIST_DIR):
+	mkdir $(DIST_DIR) 2>NUL || exit 0
 
 # encryption.o
-$(ENC_O): encryption.cpp encryption.h
-	$(CXX) $(ENC_CXXFLAGS) -c encryption.cpp -o $(ENC_O)
+$(ENC_O): $(SRC_DIR)/encryption.cpp $(INC_DIR)/encryption.h $(OBJ_DIR)
+	$(CXX) $(ENC_CXXFLAGS) $(INCLUDE_FLAGS) -c $(SRC_DIR)/encryption.cpp -o $(ENC_O)
 
-# swapster.o
-$(SWAP_O): swapster.cpp swapster.h encryption.h
-	$(CXX) $(SWAP_CXXFLAGS) -c swapster.cpp -o $(SWAP_O)
+# swapping.o
+$(SWAP_O): $(SRC_DIR)/swapping.cpp $(INC_DIR)/swapping.h $(INC_DIR)/encryption.h $(OBJ_DIR)
+	$(CXX) $(SWAP_CXXFLAGS) $(INCLUDE_FLAGS) -c $(SRC_DIR)/swapping.cpp -o $(SWAP_O)
 
-# network_map.o
-$(NETMAP_O): network_map.cpp network_map.h
-	$(CXX) $(CLNT_CXXFLAGS) -c network_map.cpp -o $(NETMAP_O)
+# lan.o
+$(LAN_O): $(SRC_DIR)/lan.cpp $(INC_DIR)/lan.h $(OBJ_DIR)
+	$(CXX) $(CLNT_CXXFLAGS) $(INCLUDE_FLAGS) -c $(SRC_DIR)/lan.cpp -o $(LAN_O)
 
 # server version resource -> .o
-$(SERVER_VER_O): $(SERVER_RC)
-	$(WINDRES) --target=pe-x86-64 $(SERVER_RC) -o $(SERVER_VER_O)
+$(SWAPSTER_VER_O): $(SWAPSTER_RC) $(OBJ_DIR)
+	$(WINDRES) --target=pe-x86-64 $(SWAPSTER_RC) -o $(SWAPSTER_VER_O)
 
-# server.exe (no console)
-$(SERVER): server.cpp $(ENC_O) $(SWAP_O) $(SERVER_VER_O)
-	$(CXX) $(SERV_CXXFLAGS) -mwindows server.cpp $(ENC_O) $(SWAP_O) $(SERVER_VER_O) -o $(SERVER) $(SERVER_LIBS) -static-libgcc -static-libstdc++ -static
+# swapster.exe
+$(SWAPSTER): $(SRC_DIR)/swapster.cpp $(ENC_O) $(SWAP_O) $(SWAPSTER_VER_O) $(DIST_DIR)
+	$(CXX) $(SERV_CXXFLAGS) $(INCLUDE_FLAGS) -mwindows $(SRC_DIR)/swapster.cpp $(ENC_O) $(SWAP_O) $(SWAPSTER_VER_O) -o $(SWAPSTER) $(SWAPSTER_LIBS) -static-libgcc -static-libstdc++ -static
 
-# client.exe
-$(CLIENT): client.cpp $(ENC_O) $(NETMAP_O)
-	$(CXX) $(CLNT_CXXFLAGS) client.cpp $(ENC_O) $(NETMAP_O) -o $(CLIENT) $(CLIENT_LIBS) -static-libgcc -static-libstdc++ -static
+# controller.exe
+$(CLIENT): $(SRC_DIR)/controller.cpp $(ENC_O) $(LAN_O) $(DIST_DIR)
+	$(CXX) $(CLNT_CXXFLAGS) $(INCLUDE_FLAGS) $(SRC_DIR)/controller.cpp $(ENC_O) $(LAN_O) -o $(CLIENT) $(CLIENT_LIBS) -static-libgcc -static-libstdc++ -static
 
 # ===== Distribution folder =====
 dist:
-	mkdir $(DIST_DIR) 2>NUL || exit 0
-	copy /Y $(SERVER) $(DIST_DIR)\ >NUL
-	copy /Y $(INSTALL_BAT) $(DIST_DIR)\ >NUL
-	copy /Y $(CLIENT) $(DIST_DIR)\ >NUL
+	copy /Y "$(INSTALL_BAT)" "$(DIST_DIR)\" >NUL
 
 clean:
-	del /Q *.exe *.o 2>NUL || exit 0
+	del /Q *.exe 2>NUL || exit 0
+	del /Q *.o 2>NUL || exit 0
+	rmdir /S /Q $(OBJ_DIR) 2>NUL || exit 0
 	rmdir /S /Q $(DIST_DIR) 2>NUL || exit 0
 
 rebuild: clean all

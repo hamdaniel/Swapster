@@ -8,7 +8,7 @@
 
 #pragma comment(lib, "iphlpapi.lib")
 
-namespace network_map {
+namespace lan {
 
 /// Get the subnet of the default adapter (e.g., "192.168.1.0")
 std::string GetSubnetAddress();
@@ -29,4 +29,4 @@ std::vector<std::string> GetActiveIPs();
 /// Returns received data (empty string on failure)
 std::string SendString(const std::string& ip, int port, const std::string& data);
 
-} // namespace network_map
+} // namespace lan

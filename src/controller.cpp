@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 #include "encryption.h"
-#include "network_map.h"
+#include "lan.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -14,10 +14,10 @@
 // Find Swapster server by scanning LAN
 // Returns pair<IP, port> if found, or pair<"", -1> if not found
 std::pair<std::string, int> FindSwapsterServer(int port_start = 2003, int port_end = 2003) {
-  network_map::PingSubnet();
+  lan::PingSubnet();
   
   std::cout << "Retrieving active IPs from ARP table..." << std::endl;
-  std::vector<std::string> ips = network_map::GetActiveIPs();
+  std::vector<std::string> ips = lan::GetActiveIPs();
   
   int total_ips = ips.size();
   
@@ -47,7 +47,7 @@ std::pair<std::string, int> FindSwapsterServer(int port_start = 2003, int port_e
     std::cout.flush();
     
     for (int port = port_start; port <= port_end; ++port) {
-      std::string response = network_map::SendString(ip, port, "swapsterswapster");
+      std::string response = lan::SendString(ip, port, "swapsterswapster");
       if (response == "SwapsterServerOK") {
         // Restore cursor
         cursorInfo.bVisible = TRUE;
@@ -134,8 +134,8 @@ int main(int argc, char** argv) {
     port = p;
     std::cout << "\nConnecting to " << ip_str << ":" << port << "...\n" << std::endl;
   } else {
-    std::cerr << "Usage: client.exe [ip port]\n";
-    std::cerr << "       client.exe (for auto-discovery)\n";
+    std::cerr << "Usage: controller.exe [ip port]\n";
+    std::cerr << "       controller.exe (for auto-discovery)\n";
     WSACleanup();
     return 1;
   }
