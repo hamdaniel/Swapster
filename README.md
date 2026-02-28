@@ -112,11 +112,6 @@ If auto-discovery fails to find the server:
 
 ## Notes
 
-- **Discovery Protocol**: 
-  - UDP broadcast on port 2003
-  - Client broadcasts: `SWAPSTER_DISCOVER`
-  - Server responds: `SWAPSTER_HERE` 
-  - Works only within same subnet; cross-subnet requires direct IP connection
 - **Multi-adapter Support**: Controller automatically tries all network adapters, prioritizing real adapters (with gateways) over virtual ones
 - **Encryption**: All commands use AES-256-CTR encryption with HMAC-SHA256 authentication after initial handshake
 - The installer expects `swapster.exe` to be in the same folder as `installer.bat` when run
