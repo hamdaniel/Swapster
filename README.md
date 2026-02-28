@@ -33,7 +33,7 @@ Output:
 
 ## Install Server on Target Machine
 
-1. Move the [SwapsterInstaller](SwapsterInstaller) folder to the target machine.
+1. Move the SwapsterInstaller folder to the target machine.
 2. Run `SwapsterInstaller\installer.bat` as Administrator (it self-elevates if needed).
 
 Installer actions:
@@ -45,7 +45,7 @@ Installer actions:
 
 ## Controller Usage
 
-From [SwapsterInstaller](SwapsterInstaller):
+From SwapsterInstaller:
 
 Auto-discovery:
 
