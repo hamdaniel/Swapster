@@ -1,4 +1,4 @@
-@echo on
+@echo off
 setlocal EnableExtensions
 
 REM ===== Self-elevate =====
@@ -76,5 +76,3 @@ start "" "%APP_DST%" %ARG1%
 schtasks /run /tn "%TASK_LOGON%" /IT >nul 2>&1
 
 endlocal
-
-pause

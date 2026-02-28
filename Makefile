@@ -6,7 +6,7 @@ WINDRES := C:\msys64\mingw64\bin\windres.exe
 
 ENC_CXXFLAGS   := -O2 -std=gnu++14
 SERV_CXXFLAGS  := -O2 -std=gnu++14
-CLNT_CXXFLAGS  := -O2 -std=gnu++14
+CLNT_CXXFLAGS  := -O2 -std=gnu++17
 SWAP_CXXFLAGS  := -O2 -std=c++11
 
 # Optional logging flag: make L=1
@@ -16,6 +16,7 @@ endif
 
 ENC_O  := encryption.o
 SWAP_O := swapster.o
+NETMAP_O := network_map.o
 
 SERVER := swapster.exe
 CLIENT := client.exe
@@ -30,7 +31,7 @@ SERVER_VER_O := server_version.o
 
 # Link libs
 SERVER_LIBS := -lws2_32 -ladvapi32 -lgdi32
-CLIENT_LIBS := -lws2_32 -ladvapi32
+CLIENT_LIBS := -lws2_32 -ladvapi32 -liphlpapi
 
 .PHONY: all clean rebuild dist
 
@@ -44,6 +45,10 @@ $(ENC_O): encryption.cpp encryption.h
 $(SWAP_O): swapster.cpp swapster.h encryption.h
 	$(CXX) $(SWAP_CXXFLAGS) -c swapster.cpp -o $(SWAP_O)
 
+# network_map.o
+$(NETMAP_O): network_map.cpp network_map.h
+	$(CXX) $(CLNT_CXXFLAGS) -c network_map.cpp -o $(NETMAP_O)
+
 # server version resource -> .o
 $(SERVER_VER_O): $(SERVER_RC)
 	$(WINDRES) --target=pe-x86-64 $(SERVER_RC) -o $(SERVER_VER_O)
@@ -53,8 +58,8 @@ $(SERVER): server.cpp $(ENC_O) $(SWAP_O) $(SERVER_VER_O)
 	$(CXX) $(SERV_CXXFLAGS) -mwindows server.cpp $(ENC_O) $(SWAP_O) $(SERVER_VER_O) -o $(SERVER) $(SERVER_LIBS) -static-libgcc -static-libstdc++ -static
 
 # client.exe
-$(CLIENT): client.cpp $(ENC_O)
-	$(CXX) $(CLNT_CXXFLAGS) client.cpp $(ENC_O) -o $(CLIENT) $(CLIENT_LIBS) -static-libgcc -static-libstdc++ -static
+$(CLIENT): client.cpp $(ENC_O) $(NETMAP_O)
+	$(CXX) $(CLNT_CXXFLAGS) client.cpp $(ENC_O) $(NETMAP_O) -o $(CLIENT) $(CLIENT_LIBS) -static-libgcc -static-libstdc++ -static
 
 # ===== Distribution folder =====
 dist:

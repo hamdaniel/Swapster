@@ -6,9 +6,50 @@
 #include <string>
 #include <vector>
 #include "encryption.h"
+#include "network_map.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
+
+// Find Swapster server by scanning LAN
+// Returns pair<IP, port> if found, or pair<"", -1> if not found
+std::pair<std::string, int> FindSwapsterServer(int port_start = 2003, int port_end = 2003) {
+  std::cout << "Priming ARP table by pinging subnet..." << std::endl;
+  network_map::PingSubnet();
+  
+  std::cout << "Retrieving active IPs from ARP table..." << std::endl;
+  std::vector<std::string> ips = network_map::GetActiveIPs();
+  
+  int total_ips = ips.size();
+  
+  std::cout << "Scanning for Swapster server..." << std::endl;
+  for (int idx = 0; idx < total_ips; ++idx) {
+    const auto& ip = ips[idx];
+    
+    // Show progress bar
+    int percent = (int)((idx + 1) * 100.0 / total_ips);
+    int bar_width = 50;
+    int filled = (int)(bar_width * percent / 100.0);
+    
+    std::cout << "\r[";
+    for (int i = 0; i < bar_width; ++i) {
+      std::cout << (i < filled ? "=" : " ");
+    }
+    std::cout << "] " << percent << "%";
+    std::cout.flush();
+    
+    for (int port = port_start; port <= port_end; ++port) {
+      std::string response = network_map::SendString(ip, port, "swapsterswapster");
+      if (response == "SwapsterServerOK") {
+        std::cout << "\n\n*** Found Swapster server at " << ip << ":" << port << " ***\n" << std::endl;
+        return {ip, port};
+      }
+    }
+  }
+  
+  std::cout << "\n\nSwapster server not found on network" << std::endl;
+  return {"", -1};
+}
 
 void print_welcome() {
   std::cout << "\x1b[38;2;255;232;31m";
@@ -48,21 +89,24 @@ static SOCKET connect_to(const char* ip, int port) {
 
 int main(int argc, char** argv) {
   
-  if (argc != 3) {
-    std::cerr << "Usage: client.exe <server_ipv4> <port>\n";
-    return 1;
-  }
-
-  const char* ip = argv[1];
-  int port = std::atoi(argv[2]);
-
   WSADATA wsa;
   if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
     std::cerr << "WSAStartup failed\n";
     return 1;
   }
 
-  SOCKET s = connect_to(ip, port);
+  std::cout << "Searching for Swapster server on LAN...\n" << std::endl;
+  auto [ip_str, port] = FindSwapsterServer();
+  
+  if (port == -1) {
+    std::cerr << "Could not find Swapster server on network\n";
+    WSACleanup();
+    return 1;
+  }
+
+  std::cout << "\nConnecting to " << ip_str << ":" << port << "...\n" << std::endl;
+  
+  SOCKET s = connect_to(ip_str.c_str(), port);
   if (s == INVALID_SOCKET) {
     std::cerr << "Connect failed\n";
     WSACleanup();

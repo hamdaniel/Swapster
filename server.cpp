@@ -25,6 +25,8 @@
     fprintf(f, fmt "\n", ##__VA_ARGS__); fclose(f); \
   } \
 } while(0)
+#else
+#define LOGF(fmt, ...) do { } while(0)
 #endif
 
 static bool handle_magic_probe(SOCKET c) {
