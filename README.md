@@ -33,7 +33,7 @@ Output:
 
 ## Install Server on Target Machine
 
-1. Copy the full [SwapsterInstaller](SwapsterInstaller) folder to the target machine.
+1. Move the [SwapsterInstaller](SwapsterInstaller) folder to the target machine.
 2. Run `SwapsterInstaller\installer.bat` as Administrator (it self-elevates if needed).
 
 Installer actions:
@@ -79,4 +79,4 @@ If server was started via installer, this removes the ProgramData-installed copy
 
 - LAN discovery probes hosts using ARP/ping + `ncat` magic probe.
 - The installer expects `swapster.exe` to be in the same folder as `installer.bat` when run.
-- The installer can be run from a USB drive
+- The installer can be run from a USB drive.
