@@ -1,6 +1,6 @@
 # Swapster
 
-Swapster is a Windows server/client pair for remote monitor-window swapping over an encrypted channel.
+Swapster provides encrypted remote monitor-window swapping between Windows machines on the same LAN.
 
 ## Project Layout
 
@@ -77,5 +77,5 @@ If server was started via installer, this removes the ProgramData-installed copy
 
 ## Notes
 
-- LAN discovery currently probes hosts using ARP/ping + `ncat` magic probe.
+- LAN discovery probes hosts using ARP/ping + `ncat` magic probe.
 - The installer expects `swapster.exe` to be in the same folder as `installer.bat` when run.
