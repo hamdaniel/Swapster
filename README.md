@@ -80,3 +80,4 @@ If server was started via installer, this removes the ProgramData-installed copy
 - LAN discovery probes hosts using ARP/ping + `ncat` magic probe.
 - The installer expects `swapster.exe` to be in the same folder as `installer.bat` when run.
 - The installer can be run from a USB drive.
+- If multiple Swapster servers are on the same LAN, auto-discovery may connect to any one of them.
