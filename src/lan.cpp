@@ -79,22 +79,37 @@ std::string GetLocalIP() {
         PIP_ADAPTER_INFO pAdapterInfo = (IP_ADAPTER_INFO*)malloc(size);
         if (!pAdapterInfo) return "";
         
+        std::string fallback_ip = "";
+        
         if (GetAdaptersInfo(pAdapterInfo, &size) == NO_ERROR) {
-            // Iterate through all adapters
+            // First pass: prefer adapters with a gateway (real adapters, not virtual)
             for (PIP_ADAPTER_INFO adapter = pAdapterInfo; adapter != NULL; adapter = adapter->Next) {
-                // Iterate through all IPs for this adapter
+                // Check if adapter has a gateway
+                if (adapter->GatewayList.IpAddress.String[0] != '\0') {
+                    for (PIP_ADDR_STRING ip_addr = &adapter->IpAddressList; ip_addr != NULL; ip_addr = ip_addr->Next) {
+                        std::string ip(ip_addr->IpAddress.String);
+                        
+                        if (!ip.empty() && ip != "0.0.0.0" && ip.find("127.") != 0) {
+                            free(pAdapterInfo);
+                            return ip;
+                        }
+                    }
+                }
+            }
+            
+            // Second pass: fallback to any valid IP
+            for (PIP_ADAPTER_INFO adapter = pAdapterInfo; adapter != NULL; adapter = adapter->Next) {
                 for (PIP_ADDR_STRING ip_addr = &adapter->IpAddressList; ip_addr != NULL; ip_addr = ip_addr->Next) {
                     std::string ip(ip_addr->IpAddress.String);
                     
-                    // Skip 0.0.0.0 and loopback addresses
                     if (!ip.empty() && ip != "0.0.0.0" && ip.find("127.") != 0) {
-                        free(pAdapterInfo);
-                        return ip;
+                        fallback_ip = ip;
                     }
                 }
             }
         }
         free(pAdapterInfo);
+        return fallback_ip;
     }
     return "";
 }
@@ -210,70 +225,180 @@ std::string DiscoverServerUDP(int port, int timeout_ms) {
         wsa_initialized = true;
     }
     
-    // Create UDP socket
-    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) {
+    // Collect all adapters
+    ULONG size = 0;
+    if (GetAdaptersInfo(NULL, &size) != ERROR_BUFFER_OVERFLOW) {
         return "";
     }
     
-    // Enable broadcast
-    BOOL broadcast = TRUE;
-    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast, sizeof(broadcast)) == SOCKET_ERROR) {
-        closesocket(sock);
+    PIP_ADAPTER_INFO pAdapterInfo = (IP_ADAPTER_INFO*)malloc(size);
+    if (!pAdapterInfo) return "";
+    
+    if (GetAdaptersInfo(pAdapterInfo, &size) != NO_ERROR) {
+        free(pAdapterInfo);
         return "";
     }
     
-    // Set receive timeout
-    DWORD timeout = timeout_ms;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+    std::string result = "";
     
-    // Bind to any port for receiving
-    sockaddr_in localAddr;
-    localAddr.sin_family = AF_INET;
-    localAddr.sin_port = 0; // any port
-    localAddr.sin_addr.s_addr = INADDR_ANY;
-    
-    if (bind(sock, (sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
-        closesocket(sock);
-        return "";
-    }
-    
-    // Setup broadcast address
-    sockaddr_in broadcastAddr;
-    broadcastAddr.sin_family = AF_INET;
-    broadcastAddr.sin_port = htons((u_short)port);
-    broadcastAddr.sin_addr.s_addr = INADDR_BROADCAST;
-    
-    // Send discovery request
-    const char* discovery_msg = "SWAPSTER_DISCOVER";
-    std::cout << "Broadcasting discovery request..." << std::endl;
-    
-    if (sendto(sock, discovery_msg, (int)strlen(discovery_msg), 0, 
-               (sockaddr*)&broadcastAddr, sizeof(broadcastAddr)) == SOCKET_ERROR) {
-        closesocket(sock);
-        return "";
-    }
-    
-    // Wait for response
-    std::cout << "Waiting for server response..." << std::endl;
-    char buf[64];
-    sockaddr_in senderAddr;
-    int senderAddrSize = sizeof(senderAddr);
-    
-    int received = recvfrom(sock, buf, sizeof(buf) - 1, 0, 
-                            (sockaddr*)&senderAddr, &senderAddrSize);
-    
-    closesocket(sock);
-    
-    if (received > 0) {
-        buf[received] = '\0';
-        if (strcmp(buf, "SWAPSTER_HERE") == 0) {
-            // Convert sender IP to string
-            char* ip = inet_ntoa(senderAddr.sin_addr);
-            return std::string(ip);
+    // First pass: try adapters WITH gateways (real adapters)
+    for (PIP_ADAPTER_INFO adapter = pAdapterInfo; adapter != NULL; adapter = adapter->Next) {
+        if (adapter->GatewayList.IpAddress.String[0] == '\0') continue; // skip no gateway
+        
+        for (PIP_ADDR_STRING ip_addr = &adapter->IpAddressList; ip_addr != NULL; ip_addr = ip_addr->Next) {
+            std::string local_ip(ip_addr->IpAddress.String);
+            std::string mask(adapter->IpAddressList.IpMask.String);
+            
+            if (local_ip.empty() || local_ip == "0.0.0.0" || local_ip.find("127.") == 0) continue;
+            
+            // Calculate broadcast
+            unsigned char subnet[4], subnet_mask[4], broadcast[4];
+            if (!StringToIP(local_ip, subnet[0], subnet[1], subnet[2], subnet[3]) ||
+                !StringToIP(mask, subnet_mask[0], subnet_mask[1], subnet_mask[2], subnet_mask[3])) {
+                continue;
+            }
+            
+            // Apply mask to get subnet, then OR with ~mask to get broadcast
+            for (int i = 0; i < 4; i++) {
+                subnet[i] = subnet[i] & subnet_mask[i];
+                broadcast[i] = subnet[i] | (~subnet_mask[i]);
+            }
+            
+            std::string broadcast_ip = IPToString(broadcast[0], broadcast[1], broadcast[2], broadcast[3]);
+            
+            std::cout << "Trying adapter " << local_ip << " -> broadcast to " << broadcast_ip << "\n";
+            
+            // Try this adapter
+            SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (sock == INVALID_SOCKET) continue;
+            
+            BOOL broadcast_enabled = TRUE;
+            setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast_enabled, sizeof(broadcast_enabled));
+            
+            DWORD timeout = timeout_ms;
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+            
+            sockaddr_in localAddr{};
+            localAddr.sin_family = AF_INET;
+            localAddr.sin_port = 0;
+            localAddr.sin_addr.s_addr = INADDR_ANY;
+            
+            if (bind(sock, (sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
+                closesocket(sock);
+                continue;
+            }
+            
+            sockaddr_in broadcastAddr{};
+            broadcastAddr.sin_family = AF_INET;
+            broadcastAddr.sin_port = htons((u_short)port);
+            broadcastAddr.sin_addr.s_addr = inet_addr(broadcast_ip.c_str());
+            
+            const char* discovery_msg = "SWAPSTER_DISCOVER";
+            if (sendto(sock, discovery_msg, (int)strlen(discovery_msg), 0, 
+                       (sockaddr*)&broadcastAddr, sizeof(broadcastAddr)) != SOCKET_ERROR) {
+                
+                char buf[64];
+                sockaddr_in senderAddr;
+                int senderAddrSize = sizeof(senderAddr);
+                
+                int received = recvfrom(sock, buf, sizeof(buf) - 1, 0, 
+                                        (sockaddr*)&senderAddr, &senderAddrSize);
+                
+                if (received > 0) {
+                    buf[received] = '\0';
+                    if (strcmp(buf, "SWAPSTER_HERE") == 0) {
+                        char* ip = inet_ntoa(senderAddr.sin_addr);
+                        result = std::string(ip);
+                        closesocket(sock);
+                        free(pAdapterInfo);
+                        return result;
+                    }
+                }
+            }
+            
+            closesocket(sock);
         }
     }
     
+    // Second pass: try adapters WITHOUT gateways (virtual adapters)
+    for (PIP_ADAPTER_INFO adapter = pAdapterInfo; adapter != NULL; adapter = adapter->Next) {
+        if (adapter->GatewayList.IpAddress.String[0] != '\0') continue; // skip ones with gateway
+        
+        for (PIP_ADDR_STRING ip_addr = &adapter->IpAddressList; ip_addr != NULL; ip_addr = ip_addr->Next) {
+            std::string local_ip(ip_addr->IpAddress.String);
+            std::string mask(adapter->IpAddressList.IpMask.String);
+            
+            if (local_ip.empty() || local_ip == "0.0.0.0" || local_ip.find("127.") == 0) continue;
+            
+            // Calculate broadcast
+            unsigned char subnet[4], subnet_mask[4], broadcast[4];
+            if (!StringToIP(local_ip, subnet[0], subnet[1], subnet[2], subnet[3]) ||
+                !StringToIP(mask, subnet_mask[0], subnet_mask[1], subnet_mask[2], subnet_mask[3])) {
+                continue;
+            }
+            
+            for (int i = 0; i < 4; i++) {
+                subnet[i] = subnet[i] & subnet_mask[i];
+                broadcast[i] = subnet[i] | (~subnet_mask[i]);
+            }
+            
+            std::string broadcast_ip = IPToString(broadcast[0], broadcast[1], broadcast[2], broadcast[3]);
+            
+            std::cout << "Trying virtual adapter " << local_ip << " -> broadcast to " << broadcast_ip << "\n";
+            
+            // Try this adapter
+            SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (sock == INVALID_SOCKET) continue;
+            
+            BOOL broadcast_enabled = TRUE;
+            setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast_enabled, sizeof(broadcast_enabled));
+            
+            DWORD timeout = timeout_ms;
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+            
+            sockaddr_in localAddr{};
+            localAddr.sin_family = AF_INET;
+            localAddr.sin_port = 0;
+            localAddr.sin_addr.s_addr = INADDR_ANY;
+            
+            if (bind(sock, (sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
+                closesocket(sock);
+                continue;
+            }
+            
+            sockaddr_in broadcastAddr{};
+            broadcastAddr.sin_family = AF_INET;
+            broadcastAddr.sin_port = htons((u_short)port);
+            broadcastAddr.sin_addr.s_addr = inet_addr(broadcast_ip.c_str());
+            
+            const char* discovery_msg = "SWAPSTER_DISCOVER";
+            if (sendto(sock, discovery_msg, (int)strlen(discovery_msg), 0, 
+                       (sockaddr*)&broadcastAddr, sizeof(broadcastAddr)) != SOCKET_ERROR) {
+                
+                char buf[64];
+                sockaddr_in senderAddr;
+                int senderAddrSize = sizeof(senderAddr);
+                
+                int received = recvfrom(sock, buf, sizeof(buf) - 1, 0, 
+                                        (sockaddr*)&senderAddr, &senderAddrSize);
+                
+                if (received > 0) {
+                    buf[received] = '\0';
+                    if (strcmp(buf, "SWAPSTER_HERE") == 0) {
+                        char* ip = inet_ntoa(senderAddr.sin_addr);
+                        result = std::string(ip);
+                        closesocket(sock);
+                        free(pAdapterInfo);
+                        return result;
+                    }
+                }
+            }
+            
+            closesocket(sock);
+        }
+    }
+    
+    free(pAdapterInfo);
     return "";
 }
 

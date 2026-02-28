@@ -173,6 +173,10 @@ static DWORD WINAPI udp_discovery_thread(LPVOID param) {
   BOOL broadcast = TRUE;
   setsockopt(udp_sock, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast, sizeof(broadcast));
   
+  // Set receive timeout
+  DWORD timeout = 1000;
+  setsockopt(udp_sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+  
   sockaddr_in udp_addr{};
   udp_addr.sin_family = AF_INET;
   udp_addr.sin_port = htons((u_short)port);
