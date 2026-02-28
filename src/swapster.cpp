@@ -103,6 +103,10 @@ static int run_cleanup() {
   system("schtasks /delete /tn \"\\Swapster\" /f >nul 2>&1");
   system("schtasks /delete /tn \"\\Swapster_Unlock\" /f >nul 2>&1");
 
+  // Remove firewall rules
+  system("netsh advfirewall firewall delete rule name=\"Swapster Server\" >nul 2>&1");
+  system("netsh advfirewall firewall delete rule name=\"Swapster Discovery\" >nul 2>&1");
+
   // Kill other instances (NOT this one)
   DWORD selfPid = GetCurrentProcessId();
   {
@@ -155,6 +159,60 @@ static SOCKET make_listen_socket(int port) {
   return ls;
 }
 
+// UDP discovery listener thread
+static DWORD WINAPI udp_discovery_thread(LPVOID param) {
+  int port = *(int*)param;
+  
+  SOCKET udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (udp_sock == INVALID_SOCKET) {
+    LOGF("UDP discovery socket creation failed");
+    return 1;
+  }
+  
+  // Allow broadcast
+  BOOL broadcast = TRUE;
+  setsockopt(udp_sock, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast, sizeof(broadcast));
+  
+  sockaddr_in udp_addr{};
+  udp_addr.sin_family = AF_INET;
+  udp_addr.sin_port = htons((u_short)port);
+  udp_addr.sin_addr.s_addr = INADDR_ANY;
+  
+  if (bind(udp_sock, (sockaddr*)&udp_addr, sizeof(udp_addr)) == SOCKET_ERROR) {
+    LOGF("UDP bind failed err=%d", WSAGetLastError());
+    closesocket(udp_sock);
+    return 1;
+  }
+  
+  LOGF("UDP discovery listening on port %d", port);
+  
+  char buf[64];
+  sockaddr_in client_addr;
+  int client_addr_len = sizeof(client_addr);
+  
+  while (true) {
+    int received = recvfrom(udp_sock, buf, sizeof(buf) - 1, 0, 
+                            (sockaddr*)&client_addr, &client_addr_len);
+    
+    if (received > 0) {
+      buf[received] = '\0';
+      
+      if (strcmp(buf, "SWAPSTER_DISCOVER") == 0) {
+        LOGF("Discovery request from %s", inet_ntoa(client_addr.sin_addr));
+        
+        const char* response = "SWAPSTER_HERE";
+        sendto(udp_sock, response, (int)strlen(response), 0, 
+               (sockaddr*)&client_addr, client_addr_len);
+        
+        LOGF("Sent discovery response");
+      }
+    }
+  }
+  
+  closesocket(udp_sock);
+  return 0;
+}
+
 int main(int argc, char** argv) {
 
   LOGF("Server start argc=%d", argc);
@@ -198,6 +256,16 @@ int main(int argc, char** argv) {
   }
 
   LOGF("Listening on %d", port);
+  
+  // Start UDP discovery listener thread
+  static int discovery_port = port;
+  HANDLE hDiscoveryThread = CreateThread(NULL, 0, udp_discovery_thread, &discovery_port, 0, NULL);
+  if (hDiscoveryThread) {
+    LOGF("UDP discovery thread started");
+    CloseHandle(hDiscoveryThread); // detach thread
+  } else {
+    LOGF("Failed to start UDP discovery thread");
+  }
 
   while (true) {
     SOCKET c = accept(ls, NULL, NULL);

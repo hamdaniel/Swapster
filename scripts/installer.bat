@@ -61,8 +61,11 @@ schtasks /create ^
   /rl HIGHEST ^
   /f || (echo Failed to create unlock task & pause & exit /b 1)
 
-REM ===== Firewall: add rule BEFORE starting server =====
+REM ===== Firewall: add rules BEFORE starting server =====
 netsh advfirewall firewall delete rule name="Swapster Server" >nul 2>&1
+netsh advfirewall firewall delete rule name="Swapster Discovery" >nul 2>&1
+
+REM Rule 1: TCP for encrypted communication
 netsh advfirewall firewall add rule ^
   name="Swapster Server" ^
   dir=in action=allow ^
@@ -70,6 +73,15 @@ netsh advfirewall firewall add rule ^
   enable=yes ^
   profile=any ^
   protocol=TCP >nul 2>&1
+
+REM Rule 2: UDP for broadcast discovery
+netsh advfirewall firewall add rule ^
+  name="Swapster Discovery" ^
+  dir=in action=allow ^
+  program="%APP_DST%" ^
+  enable=yes ^
+  profile=any ^
+  protocol=UDP >nul 2>&1
 
 REM Start now in user session
 start "" "%APP_DST%" %ARG1%

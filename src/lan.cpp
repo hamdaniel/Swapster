@@ -199,22 +199,82 @@ std::vector<std::string> GetActiveIPs() {
     return result;
 }
 
-std::string SendString(const std::string& ip, int port, const std::string& data) {
-    // Build command with stderr redirected to nul to suppress error messages
-    std::string cmd = "echo|set /p=" + data + " | ncat " + ip + " " + std::to_string(port) + " 2>nul";
+std::string DiscoverServerUDP(int port, int timeout_ms) {
+    // Initialize Winsock if needed
+    WSADATA wsaData;
+    static bool wsa_initialized = false;
+    if (!wsa_initialized) {
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            return "";
+        }
+        wsa_initialized = true;
+    }
     
-    // Open pipe to read output
-    FILE* pipe = _popen(cmd.c_str(), "rb");
-    if (!pipe) return "";
+    // Create UDP socket
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) {
+        return "";
+    }
     
-    // Read first 16 bytes
-    char buf[16];
-    size_t read = fread(buf, 1, 16, pipe);
+    // Enable broadcast
+    BOOL broadcast = TRUE;
+    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast, sizeof(broadcast)) == SOCKET_ERROR) {
+        closesocket(sock);
+        return "";
+    }
     
-    _pclose(pipe);
+    // Set receive timeout
+    DWORD timeout = timeout_ms;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
     
-    if (read == 0) return "";
-    return std::string(buf, read);
+    // Bind to any port for receiving
+    sockaddr_in localAddr;
+    localAddr.sin_family = AF_INET;
+    localAddr.sin_port = 0; // any port
+    localAddr.sin_addr.s_addr = INADDR_ANY;
+    
+    if (bind(sock, (sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
+        closesocket(sock);
+        return "";
+    }
+    
+    // Setup broadcast address
+    sockaddr_in broadcastAddr;
+    broadcastAddr.sin_family = AF_INET;
+    broadcastAddr.sin_port = htons((u_short)port);
+    broadcastAddr.sin_addr.s_addr = INADDR_BROADCAST;
+    
+    // Send discovery request
+    const char* discovery_msg = "SWAPSTER_DISCOVER";
+    std::cout << "Broadcasting discovery request..." << std::endl;
+    
+    if (sendto(sock, discovery_msg, (int)strlen(discovery_msg), 0, 
+               (sockaddr*)&broadcastAddr, sizeof(broadcastAddr)) == SOCKET_ERROR) {
+        closesocket(sock);
+        return "";
+    }
+    
+    // Wait for response
+    std::cout << "Waiting for server response..." << std::endl;
+    char buf[64];
+    sockaddr_in senderAddr;
+    int senderAddrSize = sizeof(senderAddr);
+    
+    int received = recvfrom(sock, buf, sizeof(buf) - 1, 0, 
+                            (sockaddr*)&senderAddr, &senderAddrSize);
+    
+    closesocket(sock);
+    
+    if (received > 0) {
+        buf[received] = '\0';
+        if (strcmp(buf, "SWAPSTER_HERE") == 0) {
+            // Convert sender IP to string
+            char* ip = inet_ntoa(senderAddr.sin_addr);
+            return std::string(ip);
+        }
+    }
+    
+    return "";
 }
 
 } // namespace lan

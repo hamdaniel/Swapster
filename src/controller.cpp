@@ -11,60 +11,18 @@
 #pragma comment(lib, "ws2_32.lib")
 
 
-// Find Swapster server by scanning LAN
+// Find Swapster server using UDP broadcast discovery
 // Returns pair<IP, port> if found, or pair<"", -1> if not found
-std::pair<std::string, int> FindSwapsterServer(int port_start = 2003, int port_end = 2003) {
-  lan::PingSubnet();
+std::pair<std::string, int> FindSwapsterServer(int port = 2003) {
+  std::string server_ip = lan::DiscoverServerUDP(port);
   
-  std::cout << "Retrieving active IPs from ARP table..." << std::endl;
-  std::vector<std::string> ips = lan::GetActiveIPs();
-  
-  int total_ips = ips.size();
-  
-  // Hide cursor during progress bar
-  HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-  CONSOLE_CURSOR_INFO cursorInfo;
-  GetConsoleCursorInfo(hConsole, &cursorInfo);
-  cursorInfo.bVisible = FALSE;
-  SetConsoleCursorInfo(hConsole, &cursorInfo);
-  
-  std::cout << "Scanning for Swapster server..." << std::endl;
-  for (int idx = 0; idx < total_ips; ++idx) {
-    const auto& ip = ips[idx];
-    
-    // Show progress bar
-    int percent = (int)((idx + 1) * 100.0 / total_ips);
-    int bar_width = 50;
-    int filled = (int)(bar_width * percent / 100.0);
-    
-    std::cout << "\r[";
-    for (int i = 0; i < bar_width; ++i) {
-      std::cout << (i < filled ? "=" : " ");
-    }
-    std::cout << "] " << percent << "% [" << ip << "]";
-    // Pad with spaces to clear previous longer IP
-    for (int i = 0; i < 20; ++i) std::cout << " ";
-    std::cout.flush();
-    
-    for (int port = port_start; port <= port_end; ++port) {
-      std::string response = lan::SendString(ip, port, "swapsterswapster");
-      if (response == "SwapsterServerOK") {
-        // Restore cursor
-        cursorInfo.bVisible = TRUE;
-        SetConsoleCursorInfo(hConsole, &cursorInfo);
-        
-        std::cout << "\n\n*** Found Swapster server at " << ip << ":" << port << " ***\n" << std::endl;
-        return {ip, port};
-      }
-    }
+  if (server_ip.empty()) {
+    std::cout << "\nSwapster server not found on network" << std::endl;
+    return {"", -1};
   }
   
-  // Restore cursor
-  cursorInfo.bVisible = TRUE;
-  SetConsoleCursorInfo(hConsole, &cursorInfo);
-  
-  std::cout << "\n\nSwapster server not found on network" << std::endl;
-  return {"", -1};
+  std::cout << "\n*** Found Swapster server at " << server_ip << ":" << port << " ***\n" << std::endl;
+  return {server_ip, port};
 }
 
 void print_welcome() {

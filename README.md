@@ -17,7 +17,6 @@ Requirements:
 - Windows
 - MinGW-w64 (`x86_64-w64-mingw32-g++`)
 - `windres` at `C:\msys64\mingw64\bin\windres.exe`
-- `ncat` available in PATH (used by LAN probing)
 
 Build (from repo root):
 
@@ -40,7 +39,9 @@ Installer actions:
 - Copies server to `%ProgramData%\Swapster\swapster.exe`
 - Creates scheduled task `Swapster` (run on logon)
 - Creates scheduled task `Swapster_Unlock` (run on unlock event 4801)
-- Adds Windows Firewall allow rule for the installed server exe
+- Adds Windows Firewall allow rules:
+  - **TCP port 2003**: For encrypted client communication
+  - **UDP port 2003**: For broadcast discovery
 - Starts server immediately on port `2003`
 
 ## Controller Usage
@@ -69,13 +70,37 @@ Commands after connection:
 When `TERM` is sent:
 - Server launches cleanup mode
 - Deletes scheduled tasks (`Swapster`, `Swapster_Unlock`)
+- Removes Windows Firewall rules (TCP and UDP)
 - Stops other running `swapster.exe` instances
 - Deletes the currently running server executable path
 - Removes `%ProgramData%\Swapster`
 
+## Troubleshooting
+
+### Controller Won't Run from OneDrive
+
+If you see "Can't run this application" when running from OneDrive:
+- Extract `SwapsterInstaller` folder to a local path (e.g., `C:\Swapster`)
+- Or use the `installer.bat` which copies files to `%ProgramData%\Swapster`
+
+This is due to OneDrive's storage filter driver interference with executable files.
+
+### Server Not Found During Discovery
+
+If auto-discovery fails to find the server:
+- Ensure both machines are on the same LAN/subnet
+- Check that Windows Firewall allows **UDP port 2003** on the server (the installer creates this rule automatically)
+- Verify the firewall rules exist on server:
+  ```cmd
+  netsh advfirewall firewall show rule name="Swapster Discovery"
+  netsh advfirewall firewall show rule name="Swapster Server"
+  ```
+- Try direct connection: `controller.exe <server_ip> 2003`
+- Verify server is running: check Task Manager for `swapster.exe`
+
 ## Notes
 
-- LAN discovery probes hosts using ARP/ping + `ncat` magic probe.
-- The installer expects `swapster.exe` to be in the same folder as `installer.bat` when run.
-- The installer can be run from a USB drive.
-- If multiple Swapster servers are on the same LAN, auto-discovery may connect to any one of them.
+- LAN discovery uses UDP broadcast (standard network discovery protocol like mDNS/SSDP)
+- The installer expects `swapster.exe` to be in the same folder as `installer.bat` when run
+- The installer can be run from a USB drive
+- If multiple Swapster servers are on the same LAN, auto-discovery may connect to any one of them

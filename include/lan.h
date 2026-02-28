@@ -19,14 +19,9 @@ std::string GetSubnetMask();
 /// Get the local IP address of the default adapter (e.g., "192.168.1.100")
 std::string GetLocalIP();
 
-/// Ping all IPs in the current subnet to populate the ARP table
-void PingSubnet();
-
-/// Get list of all active IPv4 addresses on the LAN (via ARP table)
-std::vector<std::string> GetActiveIPs();
-
-/// Send a string to a remote host via TCP, receive first 16 bytes back
-/// Returns received data (empty string on failure)
-std::string SendString(const std::string& ip, int port, const std::string& data);
+/// Discover Swapster server via UDP broadcast on specified port
+/// Returns server IP if found, empty string otherwise
+/// timeout_ms: how long to wait for responses (default 2000ms)
+std::string DiscoverServerUDP(int port = 2003, int timeout_ms = 2000);
 
 } // namespace lan
