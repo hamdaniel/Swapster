@@ -9,7 +9,7 @@ Swapster provides encrypted remote monitor-window swapping between Windows x64 m
 - [scripts/installer.bat](scripts/installer.bat): canonical installer script source
 - [swapster_version.rc](swapster_version.rc): Windows version resource for server binary
 - [Makefile](Makefile): MinGW build
-- [SwapsterInstaller](SwapsterInstaller): generated distribution output
+- `SwapsterInstaller`: generated distribution output
 
 ## Build
 
