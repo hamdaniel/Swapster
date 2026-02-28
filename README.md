@@ -95,14 +95,6 @@ When `TERM` is sent:
 
 ## Troubleshooting
 
-### Controller Won't Run from OneDrive
-
-If you see "Can't run this application" when running from OneDrive:
-- Extract `SwapsterInstaller` folder to a local path (e.g., `C:\Swapster`)
-- Or use the `installer.bat` which copies files to `%ProgramData%\Swapster`
-
-This is due to OneDrive's storage filter driver interference with executable files.
-
 ### Server Not Found During Discovery
 
 If auto-discovery fails to find the server:
