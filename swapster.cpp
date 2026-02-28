@@ -106,34 +106,64 @@ void RestoreForeground(HWND fg) {
  */
 BOOL CALLBACK EnumWindowsSwap(HWND hwnd, LPARAM)
 {
-    if (!IsWindowVisible(hwnd))
+    FILE* flog = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
+    
+    if (!IsWindowVisible(hwnd)) {
+        if (flog) { fprintf(flog, "EnumWindowsSwap: hwnd %p not visible\n", hwnd); fclose(flog); }
         return TRUE;
+    }
+    if (flog) { fprintf(flog, "EnumWindowsSwap: hwnd %p visible\n", hwnd); fclose(flog); }
 
     // Skip owned / tool windows (menus, tooltips, etc.)
-    if (GetWindow(hwnd, GW_OWNER) != NULL)
+    if (GetWindow(hwnd, GW_OWNER) != NULL) {
+        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
+        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p has owner\n", hwnd); fclose(f); }
         return TRUE;
+    }
 
     LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-    if (exStyle & WS_EX_TOOLWINDOW)
+    if (exStyle & WS_EX_TOOLWINDOW) {
+        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
+        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p is toolwindow\n", hwnd); fclose(f); }
         return TRUE;
+    }
 
     WINDOWPLACEMENT wp = {};
     wp.length = sizeof(WINDOWPLACEMENT);
     GetWindowPlacement(hwnd, &wp);
 
-    if (wp.showCmd == SW_SHOWMINIMIZED)
-        return TRUE; // leave minimized alone
+    if (wp.showCmd == SW_SHOWMINIMIZED) {
+        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
+        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p minimized\n", hwnd); fclose(f); }
+        return TRUE;
+    }
 
     RECT originalRect;
-    if (!GetWindowRect(hwnd, &originalRect))
+    if (!GetWindowRect(hwnd, &originalRect)) {
+        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
+        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p GetWindowRect failed\n", hwnd); fclose(f); }
         return TRUE;
+    }
+    
+    {
+        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
+        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p passed all checks, proceeding with swap\n", hwnd); fclose(f); }
+    }
 
     // Determine source and destination monitors
     g_currentMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     g_targetMonitor  = NULL;
     EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, 0);
-    if (!g_targetMonitor)
+    if (!g_targetMonitor) {
+        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
+        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p no target monitor found (only 1 monitor?)\n", hwnd); fclose(f); }
         return TRUE;
+    }
+    
+    {
+        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
+        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p found target monitor, moving window\n", hwnd); fclose(f); }
+    }
 
     MONITORINFO miSrc = { sizeof(miSrc) };
     MONITORINFO miDst = { sizeof(miDst) };
@@ -296,9 +326,15 @@ void Initialize()
 
 void SwapAllWindows()
 {
+    FILE* flog = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
+    if (flog) { fprintf(flog, "SwapAllWindows() starting\n"); fclose(flog); }
+    
     HWND fg = GetForegroundWindow();
 	EnumWindows(EnumWindowsSwap, 0);
 	RestoreForeground(fg);
+    
+    flog = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
+    if (flog) { fprintf(flog, "SwapAllWindows() finished\n"); fclose(flog); }
 }
 
 } // namespace swapster

@@ -1,4 +1,4 @@
-@echo off
+@echo on
 setlocal EnableExtensions
 
 REM ===== Self-elevate =====
@@ -13,7 +13,7 @@ REM ===== Enable unlock events (Event ID 4801) =====
 auditpol /set /subcategory:"Other Logon/Logoff Events" /success:enable >nul
 
 REM ===== CONFIG =====
-set "APP_SRC=D:\SwapsterInstallation\swapster.exe"
+set "APP_SRC=%~dp0swapster.exe"
 set "INSTALL_DIR=%ProgramData%\Swapster"
 set "APP_DST=%INSTALL_DIR%\swapster.exe"
 set "TASK_LOGON=Swapster"
@@ -61,9 +61,20 @@ schtasks /create ^
   /rl HIGHEST ^
   /f || (echo Failed to create unlock task & pause & exit /b 1)
 
-REM Start now
-schtasks /run /tn "%TASK_LOGON%" >nul 2>&1
+REM ===== Firewall: add rule BEFORE starting server =====
+netsh advfirewall firewall delete rule name="Swapster Server" >nul 2>&1
+netsh advfirewall firewall add rule ^
+  name="Swapster Server" ^
+  dir=in action=allow ^
+  program="%APP_DST%" ^
+  enable=yes ^
+  profile=any ^
+  protocol=TCP >nul 2>&1
 
-echo Installed. Starts at logon and on unlock.
-pause
+REM Start now in user session
+start "" "%APP_DST%" %ARG1%
+schtasks /run /tn "%TASK_LOGON%" /IT >nul 2>&1
+
 endlocal
+
+pause

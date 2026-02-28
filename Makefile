@@ -1,11 +1,18 @@
 # Makefile (MinGW / g++)
-CXX := g++
-WINDRES := windres
+CXX := x86_64-w64-mingw32-g++
+WINDRES := C:\msys64\mingw64\bin\windres.exe
+
+
 
 ENC_CXXFLAGS   := -O2 -std=gnu++14
 SERV_CXXFLAGS  := -O2 -std=gnu++14
 CLNT_CXXFLAGS  := -O2 -std=gnu++14
 SWAP_CXXFLAGS  := -O2 -std=c++11
+
+# Optional logging flag: make L=1
+ifdef L
+SERV_CXXFLAGS += -DLOG
+endif
 
 ENC_O  := encryption.o
 SWAP_O := swapster.o
@@ -39,15 +46,15 @@ $(SWAP_O): swapster.cpp swapster.h encryption.h
 
 # server version resource -> .o
 $(SERVER_VER_O): $(SERVER_RC)
-	$(WINDRES) $(SERVER_RC) -o $(SERVER_VER_O)
+	$(WINDRES) --target=pe-x86-64 $(SERVER_RC) -o $(SERVER_VER_O)
 
 # server.exe (no console)
 $(SERVER): server.cpp $(ENC_O) $(SWAP_O) $(SERVER_VER_O)
-	$(CXX) $(SERV_CXXFLAGS) -mwindows server.cpp $(ENC_O) $(SWAP_O) $(SERVER_VER_O) -o $(SERVER) $(SERVER_LIBS)
+	$(CXX) $(SERV_CXXFLAGS) -mwindows server.cpp $(ENC_O) $(SWAP_O) $(SERVER_VER_O) -o $(SERVER) $(SERVER_LIBS) -static-libgcc -static-libstdc++ -static
 
 # client.exe
 $(CLIENT): client.cpp $(ENC_O)
-	$(CXX) $(CLNT_CXXFLAGS) client.cpp $(ENC_O) -o $(CLIENT) $(CLIENT_LIBS)
+	$(CXX) $(CLNT_CXXFLAGS) client.cpp $(ENC_O) -o $(CLIENT) $(CLIENT_LIBS) -static-libgcc -static-libstdc++ -static
 
 # ===== Distribution folder =====
 dist:
