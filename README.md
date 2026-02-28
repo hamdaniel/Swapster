@@ -25,6 +25,19 @@ mingw32-make clean
 mingw32-make
 ```
 
+For debug builds with logging enabled:
+
+```powershell
+mingw32-make clean
+mingw32-make L=1
+```
+
+When built with `L=1`, the server logs events to `C:\ProgramData\Swapster\swapster_log.txt` including:
+- Server startup with port number
+- Controller connections/disconnections with IP addresses
+- Window swap operations
+- Critical errors
+
 Output:
 - `SwapsterInstaller\swapster.exe`
 - `SwapsterInstaller\controller.exe`
@@ -53,6 +66,11 @@ Auto-discovery:
 ```cmd
 controller.exe
 ```
+
+The controller searches for Swapster servers on the local network by:
+1. Broadcasting `SWAPSTER_DISCOVER` on UDP port 2003 to all network adapters
+2. Listening for `SWAPSTER_HERE` response from the server
+3. Automatically connecting to the first server that responds
 
 Direct connect:
 
@@ -88,19 +106,27 @@ This is due to OneDrive's storage filter driver interference with executable fil
 ### Server Not Found During Discovery
 
 If auto-discovery fails to find the server:
-- Ensure both machines are on the same LAN/subnet
+- **Both machines must be on the same subnet** - UDP broadcast only works within a local network segment
+- **Multiple network adapters**: The controller tries all adapters, prioritizing those with gateways (real adapters over virtual ones like VMware/VirtualBox)
 - Check that Windows Firewall allows **UDP port 2003** on the server (the installer creates this rule automatically)
 - Verify the firewall rules exist on server:
   ```cmd
   netsh advfirewall firewall show rule name="Swapster Discovery"
   netsh advfirewall firewall show rule name="Swapster Server"
   ```
-- Try direct connection: `controller.exe <server_ip> 2003`
+- Try direct connection if on different subnets: `controller.exe <server_ip> 2003`
 - Verify server is running: check Task Manager for `swapster.exe`
+- If built with `L=1`, check logs at `C:\ProgramData\Swapster\swapster_log.txt` on the server
 
 ## Notes
 
-- LAN discovery uses UDP broadcast (standard network discovery protocol like mDNS/SSDP)
+- **Discovery Protocol**: 
+  - UDP broadcast on port 2003
+  - Client broadcasts: `SWAPSTER_DISCOVER`
+  - Server responds: `SWAPSTER_HERE` 
+  - Works only within same subnet; cross-subnet requires direct IP connection
+- **Multi-adapter Support**: Controller automatically tries all network adapters, prioritizing real adapters (with gateways) over virtual ones
+- **Encryption**: All commands use AES-256-CTR encryption with HMAC-SHA256 authentication after initial handshake
 - The installer expects `swapster.exe` to be in the same folder as `installer.bat` when run
 - The installer can be run from a USB drive
-- If multiple Swapster servers are on the same LAN, auto-discovery may connect to any one of them
+- If multiple Swapster servers are on the same LAN, auto-discovery connects to the first one that responds
