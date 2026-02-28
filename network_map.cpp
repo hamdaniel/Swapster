@@ -109,6 +109,15 @@ void PingSubnet() {
     unsigned char a, b, c, d;
     if (!StringToIP(subnet, a, b, c, d)) return;
     
+    std::cout << "Priming ARP table by pinging subnet..." << std::endl;
+    
+    // Hide cursor during progress bar
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_CURSOR_INFO cursorInfo;
+    GetConsoleCursorInfo(hConsole, &cursorInfo);
+    cursorInfo.bVisible = FALSE;
+    SetConsoleCursorInfo(hConsole, &cursorInfo);
+    
     // Ping all IPs in the subnet (1-254, skipping 0 and 255)
     for (int i = 1; i < 255; i++) {
         char ip[20];
@@ -119,7 +128,26 @@ void PingSubnet() {
         cmd += " >nul 2>&1";
         
         system(cmd.c_str());
+        
+        // Show progress bar every few iterations
+        if (i % 10 == 0 || i == 254) {
+            int percent = (int)(i * 100.0 / 254.0);
+            int bar_width = 50;
+            int filled = (int)(bar_width * percent / 100.0);
+            
+            std::cout << "\r[";
+            for (int j = 0; j < bar_width; ++j) {
+                std::cout << (j < filled ? "=" : " ");
+            }
+            std::cout << "] " << percent << "%";
+            std::cout.flush();
+        }
     }
+    std::cout << std::endl;
+    
+    // Restore cursor
+    cursorInfo.bVisible = TRUE;
+    SetConsoleCursorInfo(hConsole, &cursorInfo);
 }
 
 std::vector<std::string> GetActiveIPs() {

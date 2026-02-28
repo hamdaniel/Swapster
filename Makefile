@@ -66,6 +66,7 @@ dist:
 	mkdir $(DIST_DIR) 2>NUL || exit 0
 	copy /Y $(SERVER) $(DIST_DIR)\ >NUL
 	copy /Y $(INSTALL_BAT) $(DIST_DIR)\ >NUL
+	copy /Y $(CLIENT) $(DIST_DIR)\ >NUL
 
 clean:
 	del /Q *.exe *.o 2>NUL || exit 0

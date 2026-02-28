@@ -60,6 +60,9 @@ static bool handle_magic_probe(SOCKET c) {
 
             // send fixed plaintext reply
             send(c, kReply, sizeof(kReply) - 1, 0);
+            
+            // Give client time to receive before closing
+            Sleep(100);
 
             return true; // caller will close
         }

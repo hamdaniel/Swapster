@@ -14,13 +14,19 @@
 // Find Swapster server by scanning LAN
 // Returns pair<IP, port> if found, or pair<"", -1> if not found
 std::pair<std::string, int> FindSwapsterServer(int port_start = 2003, int port_end = 2003) {
-  std::cout << "Priming ARP table by pinging subnet..." << std::endl;
   network_map::PingSubnet();
   
   std::cout << "Retrieving active IPs from ARP table..." << std::endl;
   std::vector<std::string> ips = network_map::GetActiveIPs();
   
   int total_ips = ips.size();
+  
+  // Hide cursor during progress bar
+  HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+  CONSOLE_CURSOR_INFO cursorInfo;
+  GetConsoleCursorInfo(hConsole, &cursorInfo);
+  cursorInfo.bVisible = FALSE;
+  SetConsoleCursorInfo(hConsole, &cursorInfo);
   
   std::cout << "Scanning for Swapster server..." << std::endl;
   for (int idx = 0; idx < total_ips; ++idx) {
@@ -35,17 +41,27 @@ std::pair<std::string, int> FindSwapsterServer(int port_start = 2003, int port_e
     for (int i = 0; i < bar_width; ++i) {
       std::cout << (i < filled ? "=" : " ");
     }
-    std::cout << "] " << percent << "%";
+    std::cout << "] " << percent << "% [" << ip << "]";
+    // Pad with spaces to clear previous longer IP
+    for (int i = 0; i < 20; ++i) std::cout << " ";
     std::cout.flush();
     
     for (int port = port_start; port <= port_end; ++port) {
       std::string response = network_map::SendString(ip, port, "swapsterswapster");
       if (response == "SwapsterServerOK") {
+        // Restore cursor
+        cursorInfo.bVisible = TRUE;
+        SetConsoleCursorInfo(hConsole, &cursorInfo);
+        
         std::cout << "\n\n*** Found Swapster server at " << ip << ":" << port << " ***\n" << std::endl;
         return {ip, port};
       }
     }
   }
+  
+  // Restore cursor
+  cursorInfo.bVisible = TRUE;
+  SetConsoleCursorInfo(hConsole, &cursorInfo);
   
   std::cout << "\n\nSwapster server not found on network" << std::endl;
   return {"", -1};
@@ -95,16 +111,34 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::cout << "Searching for Swapster server on LAN...\n" << std::endl;
-  auto [ip_str, port] = FindSwapsterServer();
+  std::string ip_str;
+  int port;
   
-  if (port == -1) {
-    std::cerr << "Could not find Swapster server on network\n";
+  if (argc == 3) {
+    // Use provided IP and port
+    ip_str = argv[1];
+    port = std::atoi(argv[2]);
+    std::cout << "Connecting to " << ip_str << ":" << port << "...\n" << std::endl;
+  } else if (argc == 1) {
+    // Auto-discover
+    std::cout << "Searching for Swapster server on LAN...\n" << std::endl;
+    auto [ip, p] = FindSwapsterServer();
+    
+    if (p == -1) {
+      std::cerr << "Could not find Swapster server on network\n";
+      WSACleanup();
+      return 1;
+    }
+    
+    ip_str = ip;
+    port = p;
+    std::cout << "\nConnecting to " << ip_str << ":" << port << "...\n" << std::endl;
+  } else {
+    std::cerr << "Usage: client.exe [ip port]\n";
+    std::cerr << "       client.exe (for auto-discovery)\n";
     WSACleanup();
     return 1;
   }
-
-  std::cout << "\nConnecting to " << ip_str << ":" << port << "...\n" << std::endl;
   
   SOCKET s = connect_to(ip_str.c_str(), port);
   if (s == INVALID_SOCKET) {
