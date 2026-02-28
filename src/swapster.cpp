@@ -151,7 +151,7 @@ static SOCKET make_listen_socket(int port) {
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
   if (bind(ls, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) return INVALID_SOCKET;
-  if (listen(ls, 16) == SOCKET_ERROR) return INVALID_SOCKET;
+  if (listen(ls, 0) == SOCKET_ERROR) return INVALID_SOCKET;
   return ls;
 }
 
