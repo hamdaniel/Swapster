@@ -25,6 +25,19 @@ std::pair<std::string, int> FindSwapsterServer(int port = 2003) {
   return {server_ip, port};
 }
 
+// Enable ANSI escape sequences in Windows Console
+static void enable_ansi_colors() {
+  HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (hOut == INVALID_HANDLE_VALUE) return;
+
+  DWORD dwMode = 0;
+  if (!GetConsoleMode(hOut, &dwMode)) return;
+
+  // Enable ANSI escape sequence processing
+  dwMode |= 0x0004; // ENABLE_VIRTUAL_TERMINAL_PROCESSING
+  SetConsoleMode(hOut, dwMode);
+}
+
 void print_welcome() {
   std::cout << "\x1b[38;2;255;232;31m";
   std::cout << R"(
@@ -37,14 +50,15 @@ void print_welcome() {
 |_______/        \__/  \__/ /__/     \__\ | _|   |_______/       |__|     |_______|| _| `._____|  
                          
 ================================================================================================
-  Encrypted session established.
-  Type commands and press Enter.
-  SWAP: Swap the contents of the displays in the target computer
-  EXIT: Disconnect from server
-  TERM: Kill the server process on the target computer 
+Encrypted session established.
+Type commands and press Enter.
+SWAP: Swap the contents of the displays in the target computer
+EXIT: Disconnect from target computer and exit controller
+TERM: Kill the swapster process on the target computer 
 ================================================================================================
 )";
   std::cout << "\x1b[0m";
+  std::cout.flush();
 }
 
 static SOCKET connect_to(const char* ip, int port) {
@@ -63,6 +77,9 @@ static SOCKET connect_to(const char* ip, int port) {
 
 int main(int argc, char** argv) {
   
+  // Enable ANSI escape sequences in Windows Console
+  enable_ansi_colors();
+  
   WSADATA wsa;
   if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
     std::cerr << "WSAStartup failed\n";
@@ -79,11 +96,11 @@ int main(int argc, char** argv) {
     std::cout << "Connecting to " << ip_str << ":" << port << "...\n" << std::endl;
   } else if (argc == 1) {
     // Auto-discover
-    std::cout << "Searching for Swapster server on LAN...\n" << std::endl;
+    std::cout << "Searching for Swapster computer on LAN...\n" << std::endl;
     auto [ip, p] = FindSwapsterServer();
     
     if (p == -1) {
-      std::cerr << "Could not find Swapster server on network\n";
+      std::cerr << "Could not find Swapster computer on network\n";
       WSACleanup();
       return 1;
     }
@@ -119,7 +136,7 @@ int main(int argc, char** argv) {
   while (std::getline(std::cin, line)) {
     if (line == "EXIT") break;
     if (line == "TERM") {
-      std::cout << "Are you sure you want to kill the server process? Type 'YES' to confirm: ";
+      std::cout << "Are you sure you want to kill swapster? Type 'YES' to confirm: ";
       std::string confirm;
       std::getline(std::cin, confirm);
       if (confirm == "YES") {
@@ -136,7 +153,7 @@ int main(int argc, char** argv) {
       break;
     }
     if(line == "TERM") {
-      std::cout << "Termination command sent. Exiting client.\n";
+      std::cout << "Termination command sent. Exiting controller.\n";
       break;
     }
     std::vector<uint8_t> echo_pt;

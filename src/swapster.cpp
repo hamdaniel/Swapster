@@ -14,6 +14,9 @@
 #include <shellapi.h>
 #include <string>
 
+// Global flag for graceful shutdown of discovery thread
+static HANDLE g_shutdown_event = NULL;
+
 #ifdef LOG
 #define LOGF(fmt, ...) do { \
   FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a"); \
@@ -88,6 +91,12 @@ static bool is_admin() {
 }
 
 static int run_cleanup() {
+  // Signal UDP discovery thread to shut down gracefully
+  if (g_shutdown_event) {
+    SetEvent(g_shutdown_event);
+    Sleep(100); // Give thread time to clean up
+  }
+
   // Elevate if needed
   if (!is_admin()) {
     char exe[MAX_PATH];
@@ -173,8 +182,8 @@ static DWORD WINAPI udp_discovery_thread(LPVOID param) {
   BOOL broadcast = TRUE;
   setsockopt(udp_sock, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast, sizeof(broadcast));
   
-  // Set receive timeout
-  DWORD timeout = 1000;
+  // Set receive timeout to allow periodic shutdown checks
+  DWORD timeout = 500; // shorter timeout for quicker shutdown response
   setsockopt(udp_sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
   
   sockaddr_in udp_addr{};
@@ -188,13 +197,17 @@ static DWORD WINAPI udp_discovery_thread(LPVOID param) {
     return 1;
   }
   
-  LOGF("UDP discovery listening on port %d", port);
-  
   char buf[64];
   sockaddr_in client_addr;
   int client_addr_len = sizeof(client_addr);
   
   while (true) {
+    // Check for shutdown signal
+    if (WaitForSingleObject(g_shutdown_event, 0) == WAIT_OBJECT_0) {
+      closesocket(udp_sock);
+      return 0;
+    }
+    
     int received = recvfrom(udp_sock, buf, sizeof(buf) - 1, 0, 
                             (sockaddr*)&client_addr, &client_addr_len);
     
@@ -202,13 +215,9 @@ static DWORD WINAPI udp_discovery_thread(LPVOID param) {
       buf[received] = '\0';
       
       if (strcmp(buf, "SWAPSTER_DISCOVER") == 0) {
-        LOGF("Discovery request from %s", inet_ntoa(client_addr.sin_addr));
-        
         const char* response = "SWAPSTER_HERE";
         sendto(udp_sock, response, (int)strlen(response), 0, 
                (sockaddr*)&client_addr, client_addr_len);
-        
-        LOGF("Sent discovery response");
       }
     }
   }
@@ -219,14 +228,14 @@ static DWORD WINAPI udp_discovery_thread(LPVOID param) {
 
 int main(int argc, char** argv) {
 
-  LOGF("Server start argc=%d", argc);
-
   // singleton guard: only one instance per session/host
   HANDLE hMutex = CreateMutexA(NULL, TRUE, "Global\\SwapsterServer");
   if (!hMutex) {
     LOGF("CreateMutex failed gle=%lu", GetLastError());
+    return 1;
   } else if (GetLastError() == ERROR_ALREADY_EXISTS) {
     LOGF("Another instance already running, exiting");
+    CloseHandle(hMutex);
     return 0;
   }
 
@@ -242,15 +251,24 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  LOGF("Port arg=%s", argv[1]);
   int port = std::atoi(argv[1]);
+  LOGF("Swapster started on port %d", port);
 
   WSADATA wsa;
   if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
     LOGF("WSAStartup failed err=%d", WSAGetLastError());
+    CloseHandle(hMutex);
     return 1;
   }
-  LOGF("WSAStartup OK");
+
+  // Create shutdown event for graceful thread termination
+  g_shutdown_event = CreateEventA(NULL, TRUE, FALSE, NULL);
+  if (!g_shutdown_event) {
+    LOGF("CreateEvent failed gle=%lu", GetLastError());
+    WSACleanup();
+    CloseHandle(hMutex);
+    return 1;
+  }
 
   SOCKET ls = make_listen_socket(port);
   if (ls == INVALID_SOCKET) {
@@ -258,24 +276,25 @@ int main(int argc, char** argv) {
     WSACleanup();
     return 1;
   }
-
-  LOGF("Listening on %d", port);
   
   // Start UDP discovery listener thread
   static int discovery_port = port;
   HANDLE hDiscoveryThread = CreateThread(NULL, 0, udp_discovery_thread, &discovery_port, 0, NULL);
   if (hDiscoveryThread) {
-    LOGF("UDP discovery thread started");
     CloseHandle(hDiscoveryThread); // detach thread
   } else {
     LOGF("Failed to start UDP discovery thread");
   }
 
   while (true) {
-    SOCKET c = accept(ls, NULL, NULL);
+    sockaddr_in client_addr;
+    int addr_len = sizeof(client_addr);
+    SOCKET c = accept(ls, (sockaddr*)&client_addr, &addr_len);
     if (c == INVALID_SOCKET) continue;
 
-    std::cout << "Client connected\n";
+    char* client_ip = inet_ntoa(client_addr.sin_addr);
+    LOGF("Controller connected from %s", client_ip);
+    std::cout << "Controller connected\n";
 
     if (handle_magic_probe(c)) {
       closesocket(c);
@@ -286,6 +305,7 @@ int main(int argc, char** argv) {
     CryptoChannel ch;
     if (!ch.init_server(c)) {
       std::cerr << "Handshake failed\n";
+      LOGF("Controller %s: Handshake failed", client_ip);
       closesocket(c);
       continue;
     }
@@ -297,10 +317,8 @@ int main(int argc, char** argv) {
       std::string msg(reinterpret_cast<const char*>(pt.data()), pt.size());
 
       if (msg == "SWAP") {
-        LOGF("SWAP command received");
         swapster::SwapAllWindows();
-        LOGF("SWAP command executed");
-        const char* reply = "Swapping windows...";
+        const char* reply = "Windows swapped successfully";
         std::vector<uint8_t> out(reply, reply + strlen(reply));
         if (!ch.send_msg(c, out)) break;
       }
@@ -338,10 +356,21 @@ int main(int argc, char** argv) {
       }
     }
 
+    LOGF("Controller %s disconnected", client_ip);
     closesocket(c);
-    std::cout << "Client disconnected\n";
+    std::cout << "Controller disconnected\n";
   }
 
+  // Clean shutdown
+  if (g_shutdown_event) {
+    SetEvent(g_shutdown_event);
+    CloseHandle(g_shutdown_event);
+  }
+  if (hMutex) {
+    CloseHandle(hMutex);
+  }
+  
+  closesocket(ls);
   WSACleanup();
   return 0;
 }

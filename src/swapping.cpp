@@ -106,25 +106,17 @@ void RestoreForeground(HWND fg) {
  */
 BOOL CALLBACK EnumWindowsSwap(HWND hwnd, LPARAM)
 {
-    FILE* flog = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
-    
     if (!IsWindowVisible(hwnd)) {
-        if (flog) { fprintf(flog, "EnumWindowsSwap: hwnd %p not visible\n", hwnd); fclose(flog); }
         return TRUE;
     }
-    if (flog) { fprintf(flog, "EnumWindowsSwap: hwnd %p visible\n", hwnd); fclose(flog); }
 
     // Skip owned / tool windows (menus, tooltips, etc.)
     if (GetWindow(hwnd, GW_OWNER) != NULL) {
-        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
-        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p has owner\n", hwnd); fclose(f); }
         return TRUE;
     }
 
     LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
     if (exStyle & WS_EX_TOOLWINDOW) {
-        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
-        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p is toolwindow\n", hwnd); fclose(f); }
         return TRUE;
     }
 
@@ -133,21 +125,12 @@ BOOL CALLBACK EnumWindowsSwap(HWND hwnd, LPARAM)
     GetWindowPlacement(hwnd, &wp);
 
     if (wp.showCmd == SW_SHOWMINIMIZED) {
-        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
-        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p minimized\n", hwnd); fclose(f); }
         return TRUE;
     }
 
     RECT originalRect;
     if (!GetWindowRect(hwnd, &originalRect)) {
-        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
-        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p GetWindowRect failed\n", hwnd); fclose(f); }
         return TRUE;
-    }
-    
-    {
-        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
-        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p passed all checks, proceeding with swap\n", hwnd); fclose(f); }
     }
 
     // Determine source and destination monitors
@@ -155,14 +138,7 @@ BOOL CALLBACK EnumWindowsSwap(HWND hwnd, LPARAM)
     g_targetMonitor  = NULL;
     EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, 0);
     if (!g_targetMonitor) {
-        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
-        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p no target monitor found (only 1 monitor?)\n", hwnd); fclose(f); }
         return TRUE;
-    }
-    
-    {
-        FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a");
-        if (f) { fprintf(f, "EnumWindowsSwap: hwnd %p found target monitor, moving window\n", hwnd); fclose(f); }
     }
 
     MONITORINFO miSrc = { sizeof(miSrc) };
