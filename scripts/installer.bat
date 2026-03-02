@@ -30,6 +30,10 @@ if not exist "%APP_SRC%" (
 
 REM Copy EXE
 mkdir "%INSTALL_DIR%" 2>nul
+
+REM Kill any running instances before copying
+taskkill /f /im swapster.exe >nul 2>&1
+
 copy /y "%APP_SRC%" "%APP_DST%" >nul || (echo Copy failed & pause & exit /b 1)
 
 REM Remove old service (optional)
