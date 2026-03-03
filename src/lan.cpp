@@ -51,6 +51,8 @@ std::string DiscoverServerUDP(int port, int timeout_ms) {
     }
     
     std::string result = "";
+    const int attempts_per_adapter = 3;
+    const DWORD recv_timeout_ms = timeout_ms > 0 ? (DWORD)(timeout_ms / attempts_per_adapter) : 600;
     
     // First pass: try adapters WITH gateways (real adapters)
     for (PIP_ADAPTER_INFO adapter = pAdapterInfo; adapter != NULL; adapter = adapter->Next) {
@@ -86,13 +88,13 @@ std::string DiscoverServerUDP(int port, int timeout_ms) {
             BOOL broadcast_enabled = TRUE;
             setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast_enabled, sizeof(broadcast_enabled));
             
-            DWORD timeout = timeout_ms;
+            DWORD timeout = recv_timeout_ms > 0 ? recv_timeout_ms : 200;
             setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
             
             sockaddr_in localAddr{};
             localAddr.sin_family = AF_INET;
             localAddr.sin_port = 0;
-            localAddr.sin_addr.s_addr = INADDR_ANY;
+            localAddr.sin_addr.s_addr = inet_addr(local_ip.c_str());
             
             if (bind(sock, (sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
                 closesocket(sock);
@@ -105,16 +107,19 @@ std::string DiscoverServerUDP(int port, int timeout_ms) {
             broadcastAddr.sin_addr.s_addr = inet_addr(broadcast_ip.c_str());
             
             const char* discovery_msg = "SWAPSTER_DISCOVER";
-            if (sendto(sock, discovery_msg, (int)strlen(discovery_msg), 0, 
-                       (sockaddr*)&broadcastAddr, sizeof(broadcastAddr)) != SOCKET_ERROR) {
-                
+            for (int attempt = 0; attempt < attempts_per_adapter; ++attempt) {
+                if (sendto(sock, discovery_msg, (int)strlen(discovery_msg), 0,
+                           (sockaddr*)&broadcastAddr, sizeof(broadcastAddr)) == SOCKET_ERROR) {
+                    continue;
+                }
+
                 char buf[64];
                 sockaddr_in senderAddr;
                 int senderAddrSize = sizeof(senderAddr);
-                
-                int received = recvfrom(sock, buf, sizeof(buf) - 1, 0, 
+
+                int received = recvfrom(sock, buf, sizeof(buf) - 1, 0,
                                         (sockaddr*)&senderAddr, &senderAddrSize);
-                
+
                 if (received > 0) {
                     buf[received] = '\0';
                     if (strcmp(buf, "SWAPSTER_HERE") == 0) {
@@ -164,13 +169,13 @@ std::string DiscoverServerUDP(int port, int timeout_ms) {
             BOOL broadcast_enabled = TRUE;
             setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast_enabled, sizeof(broadcast_enabled));
             
-            DWORD timeout = timeout_ms;
+            DWORD timeout = recv_timeout_ms > 0 ? recv_timeout_ms : 200;
             setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
             
             sockaddr_in localAddr{};
             localAddr.sin_family = AF_INET;
             localAddr.sin_port = 0;
-            localAddr.sin_addr.s_addr = INADDR_ANY;
+            localAddr.sin_addr.s_addr = inet_addr(local_ip.c_str());
             
             if (bind(sock, (sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
                 closesocket(sock);
@@ -183,16 +188,19 @@ std::string DiscoverServerUDP(int port, int timeout_ms) {
             broadcastAddr.sin_addr.s_addr = inet_addr(broadcast_ip.c_str());
             
             const char* discovery_msg = "SWAPSTER_DISCOVER";
-            if (sendto(sock, discovery_msg, (int)strlen(discovery_msg), 0, 
-                       (sockaddr*)&broadcastAddr, sizeof(broadcastAddr)) != SOCKET_ERROR) {
-                
+            for (int attempt = 0; attempt < attempts_per_adapter; ++attempt) {
+                if (sendto(sock, discovery_msg, (int)strlen(discovery_msg), 0,
+                           (sockaddr*)&broadcastAddr, sizeof(broadcastAddr)) == SOCKET_ERROR) {
+                    continue;
+                }
+
                 char buf[64];
                 sockaddr_in senderAddr;
                 int senderAddrSize = sizeof(senderAddr);
-                
-                int received = recvfrom(sock, buf, sizeof(buf) - 1, 0, 
+
+                int received = recvfrom(sock, buf, sizeof(buf) - 1, 0,
                                         (sockaddr*)&senderAddr, &senderAddrSize);
-                
+
                 if (received > 0) {
                     buf[received] = '\0';
                     if (strcmp(buf, "SWAPSTER_HERE") == 0) {
