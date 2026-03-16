@@ -61,17 +61,30 @@ TERM: Kill the swapster process on the target computer
   std::cout.flush();
 }
 
-static SOCKET connect_to(const char* ip, int port) {
+static SOCKET connect_to(const char* ip, int port, int* wsa_error = nullptr) {
   SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (s == INVALID_SOCKET) return INVALID_SOCKET;
+  if (s == INVALID_SOCKET) {
+    if (wsa_error) *wsa_error = WSAGetLastError();
+    return INVALID_SOCKET;
+  }
 
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_port = htons((u_short)port);
   addr.sin_addr.s_addr = inet_addr(ip); // MinGW.org compatible
-  if (addr.sin_addr.s_addr == INADDR_NONE) return INVALID_SOCKET;
+  if (addr.sin_addr.s_addr == INADDR_NONE) {
+    if (wsa_error) *wsa_error = WSAEINVAL;
+    closesocket(s);
+    return INVALID_SOCKET;
+  }
 
-  if (connect(s, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) return INVALID_SOCKET;
+  if (connect(s, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+    if (wsa_error) *wsa_error = WSAGetLastError();
+    closesocket(s);
+    return INVALID_SOCKET;
+  }
+
+  if (wsa_error) *wsa_error = 0;
   return s;
 }
 
@@ -115,17 +128,44 @@ int main(int argc, char** argv) {
     return 1;
   }
   
-  SOCKET s = connect_to(ip_str.c_str(), port);
-  if (s == INVALID_SOCKET) {
-    std::cerr << "Connect failed\n";
-    WSACleanup();
-    return 1;
+  SOCKET s = INVALID_SOCKET;
+  CryptoChannel ch;
+  int last_wsa_error = 0;
+  const int max_attempts = 5;
+
+  for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+    s = connect_to(ip_str.c_str(), port, &last_wsa_error);
+    if (s == INVALID_SOCKET) {
+      if (attempt < max_attempts) {
+        std::cerr << "Connect attempt " << attempt << " failed (WSA " << last_wsa_error
+                  << "), retrying...\n";
+        Sleep(200 * attempt);
+      }
+      continue;
+    }
+
+    if (ch.init_client(s)) {
+      break;
+    }
+
+    if (attempt < max_attempts) {
+      std::cerr << "Handshake attempt " << attempt << " failed, retrying...\n";
+      closesocket(s);
+      s = INVALID_SOCKET;
+      Sleep(200 * attempt);
+    } else {
+      std::cerr << "Handshake failed\n";
+      closesocket(s);
+      s = INVALID_SOCKET;
+    }
   }
 
-  CryptoChannel ch;
-  if (!ch.init_client(s)) {
-    std::cerr << "Handshake failed\n";
-    closesocket(s);
+  if (s == INVALID_SOCKET) {
+    std::cerr << "Connect failed after " << max_attempts << " attempts";
+    if (last_wsa_error != 0) {
+      std::cerr << " (last WSA " << last_wsa_error << ")";
+    }
+    std::cerr << "\n";
     WSACleanup();
     return 1;
   }
