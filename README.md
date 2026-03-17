@@ -8,7 +8,7 @@ Swapster provides encrypted remote monitor-window swapping between Windows x64 m
 - [scripts/installer.bat](scripts/installer.bat): canonical installer script source
 - [swapster_version.rc](swapster_version.rc): Windows version resource for server binary
 - [Makefile](Makefile): MinGW build
-- `SwapsterInstaller`: generated distribution output
+- `SwapsterDist`: generated distribution output
 
 ## Build
 
@@ -38,14 +38,14 @@ When built with `L=1`, the server logs events to `C:\ProgramData\Swapster\swapst
 - Critical errors
 
 Output:
-- `SwapsterInstaller\swapster.exe`
-- `SwapsterInstaller\controller.exe`
-- `SwapsterInstaller\installer.bat`
+- `SwapsterDist\swapster.exe`
+- `SwapsterDist\controller.exe`
+- `SwapsterDist\installer.bat`
 
 ## Install Server on Target Machine
 
-1. Move the `SwapsterInstaller` folder to the target machine.
-2. Run `SwapsterInstaller\installer.bat` as Administrator (it self-elevates if needed).
+1. Move the `SwapsterDist` folder to the target machine.
+2. Run `SwapsterDist\installer.bat` as Administrator (it self-elevates if needed).
 
 Installer actions:
 - Copies server to `%ProgramData%\Swapster\swapster.exe`
@@ -58,7 +58,7 @@ Installer actions:
 
 ## Controller Usage
 
-From `SwapsterInstaller`:
+From `SwapsterDist`:
 
 Auto-discovery:
 

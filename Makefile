@@ -25,7 +25,7 @@ SWAP_O       := $(OBJ_DIR)/swapping.o
 LAN_O        := $(OBJ_DIR)/lan.o
 
 # Installer output
-DIST_DIR := SwapsterInstaller
+DIST_DIR := SwapsterDist
 INSTALL_BAT := $(SCRIPTS_DIR)\installer.bat
 SWAPSTER := $(DIST_DIR)\swapster.exe
 CLIENT := $(DIST_DIR)\controller.exe

@@ -4,7 +4,7 @@
 obj/
 
 # Distribution bundle
-SwapsterInstaller/
+SwapsterDist/
 
 # Logs
 swapster_log.txt
