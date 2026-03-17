@@ -1,5 +1,5 @@
 ![Swapster](assets/swapster.png)
-Swapster provides encrypted remote monitor-window swapping between Windows x64 machines on the same LAN.
+Swapster provides remote monitor-window swapping between Windows x64 machines on the same LAN over an encrypted channel.
 
 ## Project Layout
 
