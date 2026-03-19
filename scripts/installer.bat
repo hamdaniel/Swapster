@@ -16,14 +16,23 @@ REM ===== CONFIG =====
 set "APP_SRC=%~dp0swapster.exe"
 set "INSTALL_DIR=%ProgramData%\Swapster"
 set "APP_DST=%INSTALL_DIR%\swapster.exe"
+set "WATCHDOG_SRC=%~dp0swapster_watchdog.ps1"
+set "WATCHDOG_DST=%INSTALL_DIR%\swapster_watchdog.ps1"
 set "TASK_LOGON=Swapster"
 set "TASK_UNLOCK=Swapster_Unlock"
+set "TASK_WATCHDOG=Swapster_Watchdog"
 set "ARG1=2003"
 REM ==================
 
 REM Verify source
 if not exist "%APP_SRC%" (
   echo ERROR: App not found: %APP_SRC%
+  pause
+  exit /b 1
+)
+
+if not exist "%WATCHDOG_SRC%" (
+  echo ERROR: Watchdog not found: %WATCHDOG_SRC%
   pause
   exit /b 1
 )
@@ -35,6 +44,7 @@ REM Kill any running instances before copying
 taskkill /f /im swapster.exe >nul 2>&1
 
 copy /y "%APP_SRC%" "%APP_DST%" >nul || (echo Copy failed & pause & exit /b 1)
+copy /y "%WATCHDOG_SRC%" "%WATCHDOG_DST%" >nul || (echo Watchdog copy failed & pause & exit /b 1)
 
 REM Remove old service (optional)
 sc query swapster >nul 2>&1
@@ -46,6 +56,8 @@ if not errorlevel 1 (
 REM Remove existing tasks
 schtasks /query /tn "%TASK_LOGON%" >nul 2>&1 && schtasks /delete /tn "%TASK_LOGON%" /f >nul
 schtasks /query /tn "%TASK_UNLOCK%" >nul 2>&1 && schtasks /delete /tn "%TASK_UNLOCK%" /f >nul
+schtasks /end /tn "%TASK_WATCHDOG%" >nul 2>&1
+schtasks /query /tn "%TASK_WATCHDOG%" >nul 2>&1 && schtasks /delete /tn "%TASK_WATCHDOG%" /f >nul
 
 REM ===== Task 1: Run at logon =====
 schtasks /create ^
@@ -64,6 +76,16 @@ schtasks /create ^
   /mo "*[System[(EventID=4801)]]" ^
   /rl HIGHEST ^
   /f || (echo Failed to create unlock task & pause & exit /b 1)
+
+REM ===== Task 3: Watchdog (SYSTEM, every minute) =====
+schtasks /create ^
+  /tn "%TASK_WATCHDOG%" ^
+  /tr "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%WATCHDOG_DST%\" -Port %ARG1%" ^
+  /sc MINUTE ^
+  /mo 1 ^
+  /ru SYSTEM ^
+  /rl HIGHEST ^
+  /f || (echo Failed to create watchdog task & pause & exit /b 1)
 
 REM ===== Firewall: add rules BEFORE starting server =====
 netsh advfirewall firewall delete rule name="Swapster Server" >nul 2>&1
@@ -90,5 +112,6 @@ netsh advfirewall firewall add rule ^
 REM Start now in user session
 start "" "%APP_DST%" %ARG1%
 schtasks /run /tn "%TASK_LOGON%" /IT >nul 2>&1
+schtasks /run /tn "%TASK_WATCHDOG%" >nul 2>&1
 
 endlocal

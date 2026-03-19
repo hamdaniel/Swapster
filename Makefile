@@ -27,6 +27,7 @@ LAN_O        := $(OBJ_DIR)/lan.o
 # Installer output
 DIST_DIR := SwapsterDist
 INSTALL_BAT := $(SCRIPTS_DIR)\installer.bat
+WATCHDOG_PS1 := $(SCRIPTS_DIR)\swapster_watchdog.ps1
 SWAPSTER := $(DIST_DIR)\swapster.exe
 CLIENT := $(DIST_DIR)\controller.exe
 
@@ -75,6 +76,7 @@ $(CLIENT): $(SRC_DIR)/controller.cpp $(ENC_O) $(LAN_O) $(DIST_DIR)
 # ===== Distribution folder =====
 dist:
 	copy /Y "$(INSTALL_BAT)" "$(DIST_DIR)\" >NUL
+	copy /Y "$(WATCHDOG_PS1)" "$(DIST_DIR)\" >NUL
 
 clean:
 	del /Q *.exe 2>NUL || exit 0

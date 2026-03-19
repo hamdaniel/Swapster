@@ -107,10 +107,13 @@ static int run_cleanup() {
 
   const char* TASK1 = "\\Swapster";
   const char* TASK2 = "\\Swapster_Unlock";
+  const char* TASK3 = "\\Swapster_Watchdog";
 
   // Delete tasks (do this before killing processes)
   system("schtasks /delete /tn \"\\Swapster\" /f >nul 2>&1");
   system("schtasks /delete /tn \"\\Swapster_Unlock\" /f >nul 2>&1");
+  system("schtasks /end /tn \"\\Swapster_Watchdog\" >nul 2>&1");
+  system("schtasks /delete /tn \"\\Swapster_Watchdog\" /f >nul 2>&1");
 
   // Remove firewall rules
   system("netsh advfirewall firewall delete rule name=\"Swapster Server\" >nul 2>&1");
@@ -228,6 +231,16 @@ static DWORD WINAPI udp_discovery_thread(LPVOID param) {
 
 int main(int argc, char** argv) {
 
+  // ---- Cleanup mode ----
+  // Accept both --cleanup (internal) and -1 (manual maintenance shortcut).
+  if (argc == 2) {
+    std::string arg = argv[1];
+    if (arg == "--cleanup" || arg == "-1") {
+      LOGF("Cleanup mode");
+      return run_cleanup();
+    }
+  }
+
   // singleton guard: only one instance per session/host
   HANDLE hMutex = CreateMutexA(NULL, TRUE, "Global\\SwapsterServer");
   if (!hMutex) {
@@ -237,12 +250,6 @@ int main(int argc, char** argv) {
     LOGF("Another instance already running, exiting");
     CloseHandle(hMutex);
     return 0;
-  }
-
-  // ---- Cleanup mode ----
-  if (argc == 2 && std::string(argv[1]) == "--cleanup") {
-    LOGF("Cleanup mode");
-    return run_cleanup();
   }
 
   // ---- Validate args ----
