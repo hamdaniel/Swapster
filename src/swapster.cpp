@@ -299,6 +299,9 @@ int main(int argc, char** argv) {
     SOCKET c = accept(ls, (sockaddr*)&client_addr, &addr_len);
     if (c == INVALID_SOCKET) continue;
 
+    DWORD client_timeout = 5 * 60 * 1000;
+    setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, (const char*)&client_timeout, sizeof(client_timeout));
+
     char* client_ip = inet_ntoa(client_addr.sin_addr);
     LOGF("Controller connected from %s", client_ip);
     std::cout << "Controller connected\n";
