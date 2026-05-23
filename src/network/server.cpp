@@ -1,386 +1,358 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winsock2.h>
+#include <ws2tcpip.h>
+#include <mswsock.h>
 
+#include <atomic>
+#include <cstring>
 #include <iostream>
+#include <string>
+#include <thread>
 #include <vector>
-#include <shellapi.h>
+
 #include "encryption.h"
 #include "swapping.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
-#include <windows.h>
-#include <shellapi.h>
-#include <string>
+namespace {
 
-// Global flag for graceful shutdown of discovery thread
-static HANDLE g_shutdown_event = NULL;
+constexpr const char kDiscoveryRequest[] = "SWAPSTER_DISCOVER";
+constexpr const char kDiscoveryReady[] = "SWAPSTER_READY";
+constexpr const char kDiscoveryBusy[] = "SWAPSTER_BUSY";
+constexpr const char kTimeoutReply[] = "TIMEOUT";
+constexpr int kDiscoveryPollMs = 250;
+constexpr int kAcceptTimeoutMs = 10000;
+constexpr int kIdleTimeoutMs = 60 * 1000;
 
-#ifdef LOG
-#define LOGF(fmt, ...) do { \
-  FILE* f = fopen("C:\\ProgramData\\Swapster\\swapster_log.txt", "a"); \
-  if (!f) { \
-    char b[128]; \
-    wsprintfA(b, "LOGF fopen failed gle=%lu\n", GetLastError()); \
-    OutputDebugStringA(b); \
-  } else { \
-    fprintf(f, fmt "\n", ##__VA_ARGS__); fclose(f); \
-  } \
-} while(0)
-#else
-#define LOGF(fmt, ...) do { } while(0)
-#endif
+struct DiscoveryPacket {
+  std::string payload;
+  sockaddr_in sender{};
+  std::string local_ip;
+};
 
-static bool handle_magic_probe(SOCKET c) {
-    static const char kMagic[] = "swapsterswapster"; // 16 bytes
-    static const char kReply[] = "SwapsterServerOK"; // reply to send
-    const DWORD deadline_ms = GetTickCount() + 250;  // small pre-handshake window
+static bool load_recvmsg_fn(SOCKET sock, LPFN_WSARECVMSG& recvmsg_fn) {
+  recvmsg_fn = nullptr;
+  GUID guid = WSAID_WSARECVMSG;
+  DWORD bytes = 0;
+  return WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
+                  &guid, sizeof(guid),
+                  &recvmsg_fn, sizeof(recvmsg_fn),
+                  &bytes, nullptr, nullptr) != SOCKET_ERROR;
+}
 
-    while (GetTickCount() < deadline_ms) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(c, &rfds);
+static std::string sockaddr_to_ip(const sockaddr_in& addr) {
+  char buffer[32]{};
+  const char* text = inet_ntop(AF_INET, &addr.sin_addr, buffer, sizeof(buffer));
+  if (!text) {
+    return std::string();
+  }
+  return std::string(text);
+}
 
-        timeval tv{};
-        tv.tv_sec = 0;
-        tv.tv_usec = 50 * 1000;
+static bool receive_discovery_packet(SOCKET sock, LPFN_WSARECVMSG recvmsg_fn, DiscoveryPacket& packet) {
+  packet.payload.clear();
+  packet.local_ip.clear();
+  std::memset(&packet.sender, 0, sizeof(packet.sender));
 
-        int sel = select(0, &rfds, nullptr, nullptr, &tv);
-        if (sel <= 0) continue;
+  char data[256]{};
 
-        u_long avail = 0;
-        if (ioctlsocket(c, FIONREAD, &avail) != 0) return false;
-        if (avail < 16) continue;
+  if (recvmsg_fn) {
+    WSABUF buffer{};
+    buffer.buf = data;
+    buffer.len = sizeof(data);
 
-        char buf[16];
-        int r = recv(c, buf, 16, MSG_PEEK);
-        if (r != 16) return false;
+    char control[WSA_CMSG_SPACE(sizeof(IN_PKTINFO))]{};
+    WSAMSG msg{};
+    msg.name = reinterpret_cast<SOCKADDR*>(&packet.sender);
+    msg.namelen = sizeof(packet.sender);
+    msg.lpBuffers = &buffer;
+    msg.dwBufferCount = 1;
+    msg.Control.buf = control;
+    msg.Control.len = sizeof(control);
 
-        if (memcmp(buf, kMagic, 16) == 0) {
-            // consume the magic string
-            recv(c, buf, 16, 0);
-
-            // send fixed plaintext reply
-            send(c, kReply, sizeof(kReply) - 1, 0);
-            
-            // Give client time to receive before closing
-            Sleep(100);
-
-            return true; // caller will close
-        }
-
-        return false;
+    DWORD bytes = 0;
+    int rc = recvmsg_fn(sock, &msg, &bytes, nullptr, nullptr);
+    if (rc == SOCKET_ERROR) {
+      return false;
     }
 
+    packet.payload.assign(data, data + bytes);
+
+    for (WSACMSGHDR* cmsg = WSA_CMSG_FIRSTHDR(&msg); cmsg != nullptr; cmsg = WSA_CMSG_NXTHDR(&msg, cmsg)) {
+      if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_PKTINFO) {
+        auto* pktinfo = reinterpret_cast<IN_PKTINFO*>(WSA_CMSG_DATA(cmsg));
+        char ipbuf[32]{};
+        const char* text = inet_ntop(AF_INET, &pktinfo->ipi_addr, ipbuf, sizeof(ipbuf));
+        if (text) {
+          packet.local_ip = text;
+        }
+        break;
+      }
+    }
+
+    return true;
+  }
+
+  int sender_len = sizeof(packet.sender);
+  int received = recvfrom(sock, data, sizeof(data), 0,
+                          reinterpret_cast<sockaddr*>(&packet.sender), &sender_len);
+  if (received == SOCKET_ERROR) {
     return false;
+  }
+
+  packet.payload.assign(data, data + received);
+  return true;
 }
 
-static bool is_admin() {
-  BOOL isAdmin = FALSE;
-  PSID adminGroup = NULL;
-  SID_IDENTIFIER_AUTHORITY NtAuthority = SECURITY_NT_AUTHORITY;
-
-  if (AllocateAndInitializeSid(&NtAuthority, 2,
-      SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS,
-      0,0,0,0,0,0, &adminGroup)) {
-    CheckTokenMembership(NULL, adminGroup, &isAdmin);
-    FreeSid(adminGroup);
+static SOCKET create_udp_reply_socket(const std::string& local_ip) {
+  SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (sock == INVALID_SOCKET) {
+    return INVALID_SOCKET;
   }
-  return isAdmin != FALSE;
+
+  sockaddr_in bind_addr{};
+  bind_addr.sin_family = AF_INET;
+  bind_addr.sin_port = 0;
+  if (!local_ip.empty()) {
+    bind_addr.sin_addr.s_addr = inet_addr(local_ip.c_str());
+    if (bind_addr.sin_addr.s_addr == INADDR_NONE) {
+      bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    }
+  } else {
+    bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  }
+
+  if (bind(sock, reinterpret_cast<sockaddr*>(&bind_addr), sizeof(bind_addr)) == SOCKET_ERROR) {
+    closesocket(sock);
+    return INVALID_SOCKET;
+  }
+
+  return sock;
 }
 
-static int run_cleanup() {
-  // Signal UDP discovery thread to shut down gracefully
-  if (g_shutdown_event) {
-    SetEvent(g_shutdown_event);
-    Sleep(100); // Give thread time to clean up
+static bool send_udp_reply(const std::string& local_ip, const sockaddr_in& client, const char* text) {
+  SOCKET sock = create_udp_reply_socket(local_ip);
+  if (sock == INVALID_SOCKET) {
+    return false;
   }
 
-  // Elevate if needed
-  if (!is_admin()) {
-    char exe[MAX_PATH];
-    GetModuleFileNameA(NULL, exe, MAX_PATH);
-    ShellExecuteA(NULL, "runas", exe, "--cleanup", NULL, SW_HIDE);
-    return 0;
-  }
-
-  const char* TASK1 = "\\Swapster";
-  const char* TASK2 = "\\Swapster_Unlock";
-  const char* TASK3 = "\\Swapster_Watchdog";
-
-  // Delete tasks (do this before killing processes)
-  system("schtasks /delete /tn \"\\Swapster\" /f >nul 2>&1");
-  system("schtasks /delete /tn \"\\Swapster_Unlock\" /f >nul 2>&1");
-  system("schtasks /end /tn \"\\Swapster_Watchdog\" >nul 2>&1");
-  system("schtasks /delete /tn \"\\Swapster_Watchdog\" /f >nul 2>&1");
-
-  // Remove firewall rules
-  system("netsh advfirewall firewall delete rule name=\"Swapster Server\" >nul 2>&1");
-  system("netsh advfirewall firewall delete rule name=\"Swapster Discovery\" >nul 2>&1");
-
-  // Kill other instances (NOT this one)
-  DWORD selfPid = GetCurrentProcessId();
-  {
-    std::string kill = "taskkill /IM swapster.exe /F /FI \"PID ne ";
-    kill += std::to_string(selfPid);
-    kill += "\" >nul 2>&1";
-    system(kill.c_str());
-  }
-
-  // Path to this exe
-  char exePath[MAX_PATH];
-  GetModuleFileNameA(NULL, exePath, MAX_PATH);
-
-  // After we exit: delete exe, then remove folder
-  std::string cmd =
-    "cmd /C ping 127.0.0.1 -n 3 >nul & "
-    "del /F /Q \"";
-  cmd += exePath;
-  cmd += "\" >nul 2>&1 & "
-         "rmdir /S /Q \"C:\\ProgramData\\Swapster\" >nul 2>&1";
-
-  STARTUPINFOA si{};
-  PROCESS_INFORMATION pi{};
-  si.cb = sizeof(si);
-
-  CreateProcessA(
-    NULL, (LPSTR)cmd.c_str(),
-    NULL, NULL, FALSE,
-    CREATE_NO_WINDOW | DETACHED_PROCESS,
-    NULL, NULL, &si, &pi
-  );
-
-  if (pi.hProcess) CloseHandle(pi.hProcess);
-  if (pi.hThread)  CloseHandle(pi.hThread);
-
-  return 0;
+  int sent = sendto(sock, text, static_cast<int>(std::strlen(text)), 0,
+                    reinterpret_cast<const sockaddr*>(&client), sizeof(client));
+  closesocket(sock);
+  return sent != SOCKET_ERROR;
 }
 
-static SOCKET make_listen_socket(int port) {
-  SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (ls == INVALID_SOCKET) return INVALID_SOCKET;
+static SOCKET create_tcp_listener(const std::string& local_ip, int port) {
+  SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (sock == INVALID_SOCKET) {
+    return INVALID_SOCKET;
+  }
+
+  BOOL reuse = TRUE;
+  setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
 
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
-  addr.sin_port = htons((u_short)port);
-  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  addr.sin_port = htons(static_cast<u_short>(port));
+  if (!local_ip.empty()) {
+    addr.sin_addr.s_addr = inet_addr(local_ip.c_str());
+    if (addr.sin_addr.s_addr == INADDR_NONE) {
+      addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    }
+  } else {
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  }
 
-  if (bind(ls, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) return INVALID_SOCKET;
-  if (listen(ls, 0) == SOCKET_ERROR) return INVALID_SOCKET;
-  return ls;
+  if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+    closesocket(sock);
+    return INVALID_SOCKET;
+  }
+
+  if (listen(sock, 1) == SOCKET_ERROR) {
+    closesocket(sock);
+    return INVALID_SOCKET;
+  }
+
+  return sock;
 }
 
-// UDP discovery listener thread
-static DWORD WINAPI udp_discovery_thread(LPVOID param) {
-  int port = *(int*)param;
-  
-  SOCKET udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  if (udp_sock == INVALID_SOCKET) {
-    LOGF("UDP discovery socket creation failed");
-    return 1;
-  }
-  
-  // Allow broadcast
-  BOOL broadcast = TRUE;
-  setsockopt(udp_sock, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast, sizeof(broadcast));
-  
-  // Set receive timeout to allow periodic shutdown checks
-  DWORD timeout = 500; // shorter timeout for quicker shutdown response
-  setsockopt(udp_sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-  
-  sockaddr_in udp_addr{};
-  udp_addr.sin_family = AF_INET;
-  udp_addr.sin_port = htons((u_short)port);
-  udp_addr.sin_addr.s_addr = INADDR_ANY;
-  
-  if (bind(udp_sock, (sockaddr*)&udp_addr, sizeof(udp_addr)) == SOCKET_ERROR) {
-    LOGF("UDP bind failed err=%d", WSAGetLastError());
-    closesocket(udp_sock);
-    return 1;
-  }
-  
-  char buf[64];
-  sockaddr_in client_addr;
-  int client_addr_len = sizeof(client_addr);
-  
-  while (true) {
-    // Check for shutdown signal
-    if (WaitForSingleObject(g_shutdown_event, 0) == WAIT_OBJECT_0) {
-      closesocket(udp_sock);
-      return 0;
+static SOCKET accept_with_timeout(SOCKET listener, int timeout_ms) {
+  fd_set readfds;
+  FD_ZERO(&readfds);
+  FD_SET(listener, &readfds);
+
+  timeval tv{};
+  tv.tv_sec = timeout_ms / 1000;
+  tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+  int ready = select(0, &readfds, nullptr, nullptr, &tv);
+  if (ready <= 0) {
+    if (ready == 0) {
+      WSASetLastError(WSAETIMEDOUT);
     }
-    
-    int received = recvfrom(udp_sock, buf, sizeof(buf) - 1, 0, 
-                            (sockaddr*)&client_addr, &client_addr_len);
-    
-    if (received > 0) {
-      buf[received] = '\0';
-      
-      if (strcmp(buf, "SWAPSTER_DISCOVER") == 0) {
-        const char* response = "SWAPSTER_HERE";
-        sendto(udp_sock, response, (int)strlen(response), 0, 
-               (sockaddr*)&client_addr, client_addr_len);
+    return INVALID_SOCKET;
+  }
+
+  sockaddr_in client{};
+  int client_len = sizeof(client);
+  return accept(listener, reinterpret_cast<sockaddr*>(&client), &client_len);
+}
+
+static bool send_text_reply(CryptoChannel& channel, SOCKET sock, const char* text) {
+  std::vector<uint8_t> payload(text, text + std::strlen(text));
+  return channel.send_msg(sock, payload);
+}
+
+static void session_thread(SOCKET listener,
+                           std::atomic<bool>& shutdown_requested,
+                           std::atomic<bool>& session_active) {
+  SOCKET client = accept_with_timeout(listener, kAcceptTimeoutMs);
+  if (client == INVALID_SOCKET) {
+    closesocket(listener);
+    session_active.store(false);
+    return;
+  }
+
+  DWORD idle_timeout = kIdleTimeoutMs;
+  setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&idle_timeout), sizeof(idle_timeout));
+
+  CryptoChannel channel;
+  if (!channel.init_server(client)) {
+    closesocket(client);
+    closesocket(listener);
+    session_active.store(false);
+    return;
+  }
+
+  while (!shutdown_requested.load()) {
+    std::vector<uint8_t> plaintext;
+    if (!channel.recv_msg(client, plaintext)) {
+      int error = WSAGetLastError();
+      if (error == WSAETIMEDOUT) {
+        send_text_reply(channel, client, kTimeoutReply);
       }
+      break;
+    }
+
+    std::string message(plaintext.begin(), plaintext.end());
+
+    if (message == "SWAP") {
+      swapster::SwapAllWindows();
+      send_text_reply(channel, client, "Windows swapped successfully");
+    } else if (message == "TERM") {
+      send_text_reply(channel, client, "Server shutting down");
+      shutdown_requested.store(true);
+      break;
+    } else {
+      send_text_reply(channel, client, "Unknown command");
     }
   }
-  
-  closesocket(udp_sock);
-  return 0;
+
+  shutdown(client, SD_BOTH);
+  closesocket(client);
+  closesocket(listener);
+  session_active.store(false);
 }
+
+} // namespace
 
 int main(int argc, char** argv) {
-
-  // ---- Cleanup mode ----
-  // Accept both --cleanup (internal) and -1 (manual maintenance shortcut).
-  if (argc == 2) {
-    std::string arg = argv[1];
-    if (arg == "--cleanup" || arg == "-1") {
-      LOGF("Cleanup mode");
-      return run_cleanup();
-    }
-  }
-
-  // singleton guard: only one instance per session/host
-  HANDLE hMutex = CreateMutexA(NULL, TRUE, "Global\\SwapsterServer");
-  if (!hMutex) {
-    LOGF("CreateMutex failed gle=%lu", GetLastError());
-    return 1;
-  } else if (GetLastError() == ERROR_ALREADY_EXISTS) {
-    LOGF("Another instance already running, exiting");
-    CloseHandle(hMutex);
-    return 0;
-  }
-
-  // ---- Validate args ----
   if (argc != 2) {
-    LOGF("Invalid argc=%d", argc);
+    std::cerr << "Usage: swapster.exe <port>\n";
     return 1;
   }
 
   int port = std::atoi(argv[1]);
-  LOGF("Swapster started on port %d", port);
 
   WSADATA wsa;
-  if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
-    LOGF("WSAStartup failed err=%d", WSAGetLastError());
-    CloseHandle(hMutex);
+  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+    std::cerr << "WSAStartup failed\n";
     return 1;
   }
 
-  // Create shutdown event for graceful thread termination
-  g_shutdown_event = CreateEventA(NULL, TRUE, FALSE, NULL);
-  if (!g_shutdown_event) {
-    LOGF("CreateEvent failed gle=%lu", GetLastError());
-    WSACleanup();
-    CloseHandle(hMutex);
-    return 1;
-  }
-
-  SOCKET ls = make_listen_socket(port);
-  if (ls == INVALID_SOCKET) {
-    LOGF("Bind/listen failed err=%d", WSAGetLastError());
+  HANDLE mutex = CreateMutexA(NULL, TRUE, "Global\\SwapsterServer");
+  if (!mutex) {
+    std::cerr << "Failed to create server mutex\n";
     WSACleanup();
     return 1;
   }
-  
-  // Start UDP discovery listener thread
-  static int discovery_port = port;
-  HANDLE hDiscoveryThread = CreateThread(NULL, 0, udp_discovery_thread, &discovery_port, 0, NULL);
-  if (hDiscoveryThread) {
-    CloseHandle(hDiscoveryThread); // detach thread
-  } else {
-    LOGF("Failed to start UDP discovery thread");
+
+  if (GetLastError() == ERROR_ALREADY_EXISTS) {
+    CloseHandle(mutex);
+    WSACleanup();
+    return 0;
   }
 
-  while (true) {
-    sockaddr_in client_addr;
-    int addr_len = sizeof(client_addr);
-    SOCKET c = accept(ls, (sockaddr*)&client_addr, &addr_len);
-    if (c == INVALID_SOCKET) continue;
+  SOCKET udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (udp_sock == INVALID_SOCKET) {
+    std::cerr << "Failed to create UDP socket\n";
+    CloseHandle(mutex);
+    WSACleanup();
+    return 1;
+  }
 
-    DWORD client_timeout = 5 * 60 * 1000;
-    setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, (const char*)&client_timeout, sizeof(client_timeout));
+  BOOL reuse = TRUE;
+  setsockopt(udp_sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
 
-    char* client_ip = inet_ntoa(client_addr.sin_addr);
-    LOGF("Controller connected from %s", client_ip);
-    std::cout << "Controller connected\n";
+  DWORD timeout = kDiscoveryPollMs;
+  setsockopt(udp_sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
 
-    if (handle_magic_probe(c)) {
-      closesocket(c);
-      std::cout << "Magic probe handled\n";
+  DWORD pktinfo = 1;
+  setsockopt(udp_sock, IPPROTO_IP, IP_PKTINFO, reinterpret_cast<const char*>(&pktinfo), sizeof(pktinfo));
+
+  sockaddr_in bind_addr{};
+  bind_addr.sin_family = AF_INET;
+  bind_addr.sin_port = htons(static_cast<u_short>(port));
+  bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+  if (bind(udp_sock, reinterpret_cast<sockaddr*>(&bind_addr), sizeof(bind_addr)) == SOCKET_ERROR) {
+    std::cerr << "Failed to bind UDP discovery socket\n";
+    closesocket(udp_sock);
+    CloseHandle(mutex);
+    WSACleanup();
+    return 1;
+  }
+
+  LPFN_WSARECVMSG recvmsg_fn = nullptr;
+  load_recvmsg_fn(udp_sock, recvmsg_fn);
+
+  std::atomic<bool> shutdown_requested{false};
+  std::atomic<bool> session_active{false};
+
+  while (!shutdown_requested.load()) {
+    DiscoveryPacket packet;
+    if (!receive_discovery_packet(udp_sock, recvmsg_fn, packet)) {
+      int error = WSAGetLastError();
+      if (error == WSAETIMEDOUT || error == WSAEWOULDBLOCK) {
+        continue;
+      }
       continue;
     }
 
-    CryptoChannel ch;
-    if (!ch.init_server(c)) {
-      std::cerr << "Handshake failed\n";
-      LOGF("Controller %s: Handshake failed", client_ip);
-      closesocket(c);
+    if (packet.payload != kDiscoveryRequest) {
       continue;
     }
 
-    while (true) {
-      std::vector<uint8_t> pt;
-      if (!ch.recv_msg(c, pt)) break;
-
-      std::string msg(reinterpret_cast<const char*>(pt.data()), pt.size());
-
-      if (msg == "SWAP") {
-        swapster::SwapAllWindows();
-        const char* reply = "Windows swapped successfully";
-        std::vector<uint8_t> out(reply, reply + strlen(reply));
-        if (!ch.send_msg(c, out)) break;
-      }
-      else if (msg == "TERM") {
-        char path[MAX_PATH];
-        GetModuleFileNameA(NULL, path, MAX_PATH);
-
-        std::string cmd = "\"";
-        cmd += path;
-        cmd += "\" --cleanup";
-
-        STARTUPINFOA si{};
-        PROCESS_INFORMATION pi{};
-        si.cb = sizeof(si);
-
-        CreateProcessA(
-          NULL,
-          (LPSTR)cmd.c_str(),
-          NULL, NULL,
-          FALSE,
-          CREATE_NO_WINDOW | DETACHED_PROCESS,
-          NULL, NULL,
-          &si, &pi
-        );
-
-        if (pi.hProcess) CloseHandle(pi.hProcess);
-        if (pi.hThread)  CloseHandle(pi.hThread);
-
-        return 0;
-      }
-      else {
-        const char* reply = "Unknown command";
-        std::vector<uint8_t> out(reply, reply + strlen(reply));
-        if (!ch.send_msg(c, out)) break;
-      }
+    if (session_active.load()) {
+      send_udp_reply(packet.local_ip, packet.sender, kDiscoveryBusy);
+      continue;
     }
 
-    LOGF("Controller %s disconnected", client_ip);
-    closesocket(c);
-    std::cout << "Controller disconnected\n";
+    SOCKET listener = create_tcp_listener(packet.local_ip, port);
+    if (listener == INVALID_SOCKET) {
+      send_udp_reply(packet.local_ip, packet.sender, kDiscoveryBusy);
+      continue;
+    }
+
+    session_active.store(true);
+    std::thread(session_thread, listener, std::ref(shutdown_requested), std::ref(session_active)).detach();
+    send_udp_reply(packet.local_ip, packet.sender, kDiscoveryReady);
   }
 
-  // Clean shutdown
-  if (g_shutdown_event) {
-    SetEvent(g_shutdown_event);
-    CloseHandle(g_shutdown_event);
-  }
-  if (hMutex) {
-    CloseHandle(hMutex);
-  }
-  
-  closesocket(ls);
+  closesocket(udp_sock);
+  CloseHandle(mutex);
   WSACleanup();
   return 0;
 }

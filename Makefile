@@ -70,8 +70,8 @@ $(SWAPSTER): $(SRC_DIR)/network/server.cpp $(ENC_O) $(SWAP_O) $(SWAPSTER_VER_O) 
 	$(CXX) $(SERV_CXXFLAGS) $(INCLUDE_FLAGS) -mwindows $(SRC_DIR)/network/server.cpp $(ENC_O) $(SWAP_O) $(SWAPSTER_VER_O) -o $(SWAPSTER) $(SWAPSTER_LIBS) -static-libgcc -static-libstdc++ -static
 
 # controller.exe
-$(CLIENT): $(SRC_DIR)/network/client.cpp $(ENC_O) $(LAN_O) $(DIST_DIR)
-	$(CXX) $(CLNT_CXXFLAGS) $(INCLUDE_FLAGS) $(SRC_DIR)/network/client.cpp $(ENC_O) $(LAN_O) -o $(CLIENT) $(CLIENT_LIBS) -static-libgcc -static-libstdc++ -static
+$(CLIENT): $(SRC_DIR)/network/client.cpp $(ENC_O) $(DIST_DIR)
+	$(CXX) $(CLNT_CXXFLAGS) $(INCLUDE_FLAGS) $(SRC_DIR)/network/client.cpp $(ENC_O) -o $(CLIENT) $(CLIENT_LIBS) -static-libgcc -static-libstdc++ -static
 
 # ===== Distribution folder =====
 dist:
