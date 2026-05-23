@@ -1,6 +1,11 @@
 # Makefile (MinGW / g++)
 CXX := x86_64-w64-mingw32-g++
-WINDRES := C:\msys64\mingw64\bin\windres.exe
+WINDRES_DEFAULT := C:/msys64/mingw64/bin/windres.exe
+ifeq ($(wildcard $(WINDRES_DEFAULT)),)
+WINDRES ?= windres
+else
+WINDRES ?= $(WINDRES_DEFAULT)
+endif
 
 
 

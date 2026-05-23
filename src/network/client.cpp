@@ -474,14 +474,18 @@ int main(int argc, char** argv) {
   }
 
   std::string server_ip;
+  std::string requested_ip;
   int port = 0;
   DiscoveryResult discovery;
+  bool direct_mode = false;
 
   if (argc == 3) {
-    server_ip = argv[1];
+    requested_ip = argv[1];
+    server_ip = requested_ip;
     port = std::atoi(argv[2]);
     std::cout << "Connecting to " << server_ip << ":" << port << "...\n" << std::endl;
     discovery = probe_direct(server_ip, port);
+    direct_mode = true;
   } else if (argc == 1) {
     std::cout << "Searching for Swapster computer on LAN...\n" << std::endl;
     port = 2003;
@@ -505,7 +509,9 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  server_ip = discovery.server_ip;
+  if (!direct_mode) {
+    server_ip = discovery.server_ip;
+  }
   std::cout << "\n*** Found Swapster server at " << server_ip << ":" << port << " ***\n" << std::endl;
   std::cout << "\nConnecting to " << server_ip << ":" << port << "...\n" << std::endl;
 
