@@ -176,22 +176,26 @@ static bool send_text_reply(CryptoChannel& channel, SOCKET sock, const char* tex
 static void session_thread(SOCKET listener,
                            std::atomic<bool>& shutdown_requested,
                            std::atomic<bool>& session_active,
-                           std::atomic<bool>& awaiting_accept) {
+                           std::atomic<bool>& awaiting_accept,
+                           std::atomic<bool>& session_established) {
   SOCKET client = accept_with_timeout(listener, kAcceptTimeoutMs);
   if (client == INVALID_SOCKET) {
     awaiting_accept.store(false);
+    session_established.store(false);
     closesocket(listener);
     session_active.store(false);
     return;
   }
 
   awaiting_accept.store(false);
+  session_established.store(true);
 
   DWORD idle_timeout = kIdleTimeoutMs;
   setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&idle_timeout), sizeof(idle_timeout));
 
   CryptoChannel channel;
   if (!channel.init_server(client)) {
+    session_established.store(false);
     closesocket(client);
     closesocket(listener);
     session_active.store(false);
@@ -223,6 +227,7 @@ static void session_thread(SOCKET listener,
   }
 
   shutdown(client, SD_BOTH);
+  session_established.store(false);
   closesocket(client);
   closesocket(listener);
   session_active.store(false);
@@ -293,6 +298,7 @@ int main(int argc, char** argv) {
   std::atomic<bool> shutdown_requested{false};
   std::atomic<bool> session_active{false};
   std::atomic<bool> awaiting_accept{false};
+  std::atomic<bool> session_established{false};
   std::atomic<u_long> pending_client_addr{0};
 
   while (!shutdown_requested.load()) {
@@ -310,10 +316,14 @@ int main(int argc, char** argv) {
     }
 
     if (session_active.load()) {
-      if (awaiting_accept.load() && packet.sender.sin_addr.s_addr == pending_client_addr.load()) {
+      if (awaiting_accept.load()) {
         send_udp_reply(udp_sock, packet.sender, kDiscoveryReady);
       } else {
-        send_udp_reply(udp_sock, packet.sender, kDiscoveryBusy);
+        if (session_established.load()) {
+          send_udp_reply(udp_sock, packet.sender, kDiscoveryBusy);
+        } else {
+          send_udp_reply(udp_sock, packet.sender, kDiscoveryReady);
+        }
       }
       continue;
     }
@@ -330,7 +340,8 @@ int main(int argc, char** argv) {
     std::thread(session_thread, listener,
                 std::ref(shutdown_requested),
                 std::ref(session_active),
-                std::ref(awaiting_accept)).detach();
+                std::ref(awaiting_accept),
+                std::ref(session_established)).detach();
     send_udp_reply(udp_sock, packet.sender, kDiscoveryReady);
   }
 
