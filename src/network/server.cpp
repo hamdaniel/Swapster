@@ -124,14 +124,7 @@ static SOCKET create_tcp_listener(const std::string& local_ip, int port) {
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_port = htons(static_cast<u_short>(port));
-  if (!local_ip.empty()) {
-    addr.sin_addr.s_addr = inet_addr(local_ip.c_str());
-    if (addr.sin_addr.s_addr == INADDR_NONE) {
-      addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    }
-  } else {
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  }
+  addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
   if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
     closesocket(sock);
