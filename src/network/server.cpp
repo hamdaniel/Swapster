@@ -106,41 +106,9 @@ static bool receive_discovery_packet(SOCKET sock, LPFN_WSARECVMSG recvmsg_fn, Di
   return true;
 }
 
-static SOCKET create_udp_reply_socket(const std::string& local_ip) {
-  SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  if (sock == INVALID_SOCKET) {
-    return INVALID_SOCKET;
-  }
-
-  sockaddr_in bind_addr{};
-  bind_addr.sin_family = AF_INET;
-  bind_addr.sin_port = 0;
-  if (!local_ip.empty()) {
-    bind_addr.sin_addr.s_addr = inet_addr(local_ip.c_str());
-    if (bind_addr.sin_addr.s_addr == INADDR_NONE) {
-      bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    }
-  } else {
-    bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  }
-
-  if (bind(sock, reinterpret_cast<sockaddr*>(&bind_addr), sizeof(bind_addr)) == SOCKET_ERROR) {
-    closesocket(sock);
-    return INVALID_SOCKET;
-  }
-
-  return sock;
-}
-
-static bool send_udp_reply(const std::string& local_ip, const sockaddr_in& client, const char* text) {
-  SOCKET sock = create_udp_reply_socket(local_ip);
-  if (sock == INVALID_SOCKET) {
-    return false;
-  }
-
-  int sent = sendto(sock, text, static_cast<int>(std::strlen(text)), 0,
+static bool send_udp_reply(SOCKET udp_sock, const sockaddr_in& client, const char* text) {
+  int sent = sendto(udp_sock, text, static_cast<int>(std::strlen(text)), 0,
                     reinterpret_cast<const sockaddr*>(&client), sizeof(client));
-  closesocket(sock);
   return sent != SOCKET_ERROR;
 }
 
@@ -336,19 +304,19 @@ int main(int argc, char** argv) {
     }
 
     if (session_active.load()) {
-      send_udp_reply(packet.local_ip, packet.sender, kDiscoveryBusy);
+      send_udp_reply(udp_sock, packet.sender, kDiscoveryBusy);
       continue;
     }
 
     SOCKET listener = create_tcp_listener(packet.local_ip, port);
     if (listener == INVALID_SOCKET) {
-      send_udp_reply(packet.local_ip, packet.sender, kDiscoveryBusy);
+      send_udp_reply(udp_sock, packet.sender, kDiscoveryBusy);
       continue;
     }
 
     session_active.store(true);
     std::thread(session_thread, listener, std::ref(shutdown_requested), std::ref(session_active)).detach();
-    send_udp_reply(packet.local_ip, packet.sender, kDiscoveryReady);
+    send_udp_reply(udp_sock, packet.sender, kDiscoveryReady);
   }
 
   closesocket(udp_sock);
