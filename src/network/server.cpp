@@ -175,13 +175,17 @@ static bool send_text_reply(CryptoChannel& channel, SOCKET sock, const char* tex
 
 static void session_thread(SOCKET listener,
                            std::atomic<bool>& shutdown_requested,
-                           std::atomic<bool>& session_active) {
+                           std::atomic<bool>& session_active,
+                           std::atomic<bool>& awaiting_accept) {
   SOCKET client = accept_with_timeout(listener, kAcceptTimeoutMs);
   if (client == INVALID_SOCKET) {
+    awaiting_accept.store(false);
     closesocket(listener);
     session_active.store(false);
     return;
   }
+
+  awaiting_accept.store(false);
 
   DWORD idle_timeout = kIdleTimeoutMs;
   setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&idle_timeout), sizeof(idle_timeout));
@@ -288,6 +292,8 @@ int main(int argc, char** argv) {
 
   std::atomic<bool> shutdown_requested{false};
   std::atomic<bool> session_active{false};
+  std::atomic<bool> awaiting_accept{false};
+  std::atomic<u_long> pending_client_addr{0};
 
   while (!shutdown_requested.load()) {
     DiscoveryPacket packet;
@@ -304,7 +310,11 @@ int main(int argc, char** argv) {
     }
 
     if (session_active.load()) {
-      send_udp_reply(udp_sock, packet.sender, kDiscoveryBusy);
+      if (awaiting_accept.load() && packet.sender.sin_addr.s_addr == pending_client_addr.load()) {
+        send_udp_reply(udp_sock, packet.sender, kDiscoveryReady);
+      } else {
+        send_udp_reply(udp_sock, packet.sender, kDiscoveryBusy);
+      }
       continue;
     }
 
@@ -314,8 +324,13 @@ int main(int argc, char** argv) {
       continue;
     }
 
+    pending_client_addr.store(packet.sender.sin_addr.s_addr);
     session_active.store(true);
-    std::thread(session_thread, listener, std::ref(shutdown_requested), std::ref(session_active)).detach();
+    awaiting_accept.store(true);
+    std::thread(session_thread, listener,
+                std::ref(shutdown_requested),
+                std::ref(session_active),
+                std::ref(awaiting_accept)).detach();
     send_udp_reply(udp_sock, packet.sender, kDiscoveryReady);
   }
 

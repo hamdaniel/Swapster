@@ -4,15 +4,10 @@
 #include <iphlpapi.h>
 #include <ws2tcpip.h>
 
-#include <atomic>
-#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
-#include <mutex>
-#include <queue>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "encryption.h"
@@ -27,7 +22,6 @@ constexpr const char kDiscoveryReady[] = "SWAPSTER_READY";
 constexpr const char kDiscoveryBusy[] = "SWAPSTER_BUSY";
 constexpr const char kTimeoutReply[] = "TIMEOUT";
 constexpr int kDiscoveryTimeoutMs = 2000;
-constexpr int kCommandTimeoutMs = 1000;
 
 struct BroadcastTarget {
   std::string local_ip;
@@ -172,6 +166,9 @@ static SOCKET create_discovery_socket(const std::string& local_ip, bool broadcas
 
 static DiscoveryResult wait_for_discovery_reply(std::vector<SOCKET>& sockets, int timeout_ms) {
   DiscoveryResult result;
+  bool saw_busy = false;
+  std::string busy_server_ip;
+  std::string busy_message;
   DWORD deadline = GetTickCount() + timeout_ms;
 
   while (static_cast<int>(GetTickCount() - deadline) < 0) {
@@ -219,14 +216,28 @@ static DiscoveryResult wait_for_discovery_reply(std::vector<SOCKET>& sockets, in
 
       if (result.message == kDiscoveryReady) {
         result.status = DiscoveryStatus::Ready;
-      } else if (result.message == kDiscoveryBusy) {
-        result.status = DiscoveryStatus::Busy;
-      } else {
-        result.status = DiscoveryStatus::Invalid;
+        return result;
       }
 
-      return result;
+      if (result.message == kDiscoveryBusy) {
+        if (!saw_busy) {
+          saw_busy = true;
+          busy_server_ip = result.server_ip;
+          busy_message = result.message;
+        }
+        continue;
+      } else {
+        result.status = DiscoveryStatus::Invalid;
+        continue;
+      }
     }
+  }
+
+  if (saw_busy) {
+    result.status = DiscoveryStatus::Busy;
+    result.server_ip = busy_server_ip;
+    result.message = busy_message;
+    return result;
   }
 
   result.status = DiscoveryStatus::NotFound;
@@ -341,104 +352,6 @@ static SOCKET connect_to(const char* ip, int port, int* wsa_error = nullptr) {
   return sock;
 }
 
-class ClientSession {
-public:
-  explicit ClientSession(SOCKET socket) : socket_(socket) {}
-
-  ~ClientSession() {
-    stop();
-  }
-
-  bool start() {
-    if (!channel_.init_client(socket_)) {
-      return false;
-    }
-
-    running_.store(true);
-    reader_ = std::thread(&ClientSession::reader_loop, this);
-    return true;
-  }
-
-  bool send_command(const std::string& text) {
-    std::vector<uint8_t> payload(text.begin(), text.end());
-    return channel_.send_msg(socket_, payload);
-  }
-
-  bool wait_for_response(std::string& response) {
-    std::unique_lock<std::mutex> lock(queue_mutex_);
-    response_cv_.wait(lock, [this] {
-      return !responses_.empty() || !running_.load();
-    });
-
-    if (responses_.empty()) {
-      return false;
-    }
-
-    response = std::move(responses_.front());
-    responses_.pop();
-    return true;
-  }
-
-  void stop() {
-    stop_requested_.store(true);
-    if (socket_ != INVALID_SOCKET) {
-      shutdown(socket_, SD_BOTH);
-    }
-    if (reader_.joinable()) {
-      reader_.join();
-    }
-    if (socket_ != INVALID_SOCKET) {
-      closesocket(socket_);
-      socket_ = INVALID_SOCKET;
-    }
-  }
-
-private:
-  void reader_loop() {
-    while (!stop_requested_.load()) {
-      std::vector<uint8_t> plaintext;
-      if (!channel_.recv_msg(socket_, plaintext)) {
-        if (!stop_requested_.load()) {
-          int error = WSAGetLastError();
-          if (error == WSAETIMEDOUT) {
-            std::cout << "\nServer timed out after 1 minute of inactivity.\n";
-          } else {
-            std::cout << "\nConnection closed.\n";
-          }
-          std::cout.flush();
-          ExitProcess(0);
-        }
-        break;
-      }
-
-      std::string text(plaintext.begin(), plaintext.end());
-      if (text == kTimeoutReply) {
-        std::cout << "\nServer timed out after 1 minute of inactivity.\n";
-        std::cout.flush();
-        ExitProcess(0);
-      }
-
-      {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        responses_.push(text);
-      }
-      response_cv_.notify_one();
-    }
-
-    running_.store(false);
-    response_cv_.notify_all();
-  }
-
-  SOCKET socket_ = INVALID_SOCKET;
-  CryptoChannel channel_;
-  std::thread reader_;
-  std::atomic<bool> running_{false};
-  std::atomic<bool> stop_requested_{false};
-  std::mutex queue_mutex_;
-  std::condition_variable response_cv_;
-  std::queue<std::string> responses_;
-};
-
 static void print_welcome() {
   std::cout << "\x1b[38;2;255;232;31m";
   std::cout << R"SWAPSTER_BANNER(
@@ -516,6 +429,7 @@ int main(int argc, char** argv) {
   std::cout << "\nConnecting to " << server_ip << ":" << port << "...\n" << std::endl;
 
   SOCKET socket = INVALID_SOCKET;
+  CryptoChannel channel;
   int last_wsa_error = 0;
   const int max_attempts = 5;
 
@@ -530,57 +444,66 @@ int main(int argc, char** argv) {
       continue;
     }
 
-    ClientSession session(socket);
-    if (session.start()) {
-      print_welcome();
+    if (!channel.init_client(socket)) {
+      closesocket(socket);
+      socket = INVALID_SOCKET;
 
-      std::string line;
-      while (std::getline(std::cin, line)) {
-        if (line == "EXIT") {
-          break;
-        }
+      if (attempt < max_attempts) {
+        std::cerr << "Handshake attempt " << attempt << " failed, retrying...\n";
+        Sleep(200 * attempt);
+      }
+      continue;
+    }
 
-        if (line == "TERM") {
-          std::cout << "Are you sure you want to kill swapster? Type 'YES' to confirm: ";
-          std::string confirm;
-          std::getline(std::cin, confirm);
-          if (confirm != "YES") {
-            std::cout << "Termination cancelled.\n";
-            continue;
-          }
-        }
+    print_welcome();
 
-        if (!session.send_command(line)) {
-          std::cerr << "Send failed\n";
-          break;
-        }
+    std::string line;
+    while (std::getline(std::cin, line)) {
+      if (line == "EXIT") {
+        break;
+      }
 
-        std::string response;
-        if (!session.wait_for_response(response)) {
-          std::cerr << "Receive failed\n";
-          break;
-        }
-
-        std::cout << response << "\n";
-
-        if (line == "TERM") {
-          std::cout << "Termination command acknowledged. Exiting controller.\n";
-          break;
+      if (line == "TERM") {
+        std::cout << "Are you sure you want to kill swapster? Type 'YES' to confirm: ";
+        std::string confirm;
+        std::getline(std::cin, confirm);
+        if (confirm != "YES") {
+          std::cout << "Termination cancelled.\n";
+          continue;
         }
       }
 
-      session.stop();
-      WSACleanup();
-      return 0;
+      std::vector<uint8_t> payload(line.begin(), line.end());
+      if (!channel.send_msg(socket, payload)) {
+        std::cerr << "Send failed\n";
+        break;
+      }
+
+      std::vector<uint8_t> response_payload;
+      if (!channel.recv_msg(socket, response_payload)) {
+        std::cerr << "Receive failed\n";
+        break;
+      }
+
+      std::string response(response_payload.begin(), response_payload.end());
+      if (response == kTimeoutReply) {
+        std::cout << "Server timed out after 1 minute of inactivity.\n";
+        break;
+      }
+
+      std::cout << response << "\n";
+
+      if (line == "TERM") {
+        std::cout << "Termination command acknowledged. Exiting controller.\n";
+        break;
+      }
     }
 
+    shutdown(socket, SD_BOTH);
     closesocket(socket);
     socket = INVALID_SOCKET;
-
-    if (attempt < max_attempts) {
-      std::cerr << "Handshake attempt " << attempt << " failed, retrying...\n";
-      Sleep(200 * attempt);
-    }
+    WSACleanup();
+    return 0;
   }
 
   std::cerr << "Connect failed after " << max_attempts << " attempts";
