@@ -22,6 +22,7 @@ constexpr const char kDiscoveryReady[] = "SWAPSTER_READY";
 constexpr const char kDiscoveryBusy[] = "SWAPSTER_BUSY";
 constexpr const char kTimeoutReply[] = "TIMEOUT";
 constexpr int kDiscoveryTimeoutMs = 2000;
+constexpr int kDirectDiscoveryTimeoutMs = 5000;
 
 struct BroadcastTarget {
   std::string local_ip;
@@ -271,7 +272,7 @@ static DiscoveryResult probe_direct(const std::string& server_ip, int port) {
   }
 
   std::vector<SOCKET> sockets{sock};
-  DiscoveryResult reply = wait_for_discovery_reply(sockets, kDiscoveryTimeoutMs);
+  DiscoveryResult reply = wait_for_discovery_reply(sockets, kDirectDiscoveryTimeoutMs);
   closesocket(sock);
   return reply;
 }

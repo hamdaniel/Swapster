@@ -5,7 +5,8 @@ Swapster provides remote monitor-window swapping between Windows x64 machines on
 
 - [src](src): C++ source files
 - [include](include): C++ headers
-- [scripts/installer.bat](scripts/installer.bat): canonical installer script source
+- [scripts/install_swapster.cmd](scripts/install_swapster.cmd): installer launcher (double-click friendly)
+- [scripts/install_swapster.ps1](scripts/install_swapster.ps1): elevated installer logic
 - [swapster_version.rc](swapster_version.rc): Windows version resource for server binary
 - [Makefile](Makefile): MinGW build
 - `SwapsterDist`: generated distribution output
@@ -40,17 +41,17 @@ When built with `L=1`, the server logs events to `C:\ProgramData\Swapster\swapst
 Output:
 - `SwapsterDist\swapster.exe`
 - `SwapsterDist\controller.exe`
-- `SwapsterDist\installer.bat`
+- `SwapsterDist\install_swapster.cmd`
+- `SwapsterDist\install_swapster.ps1`
 
 ## Install Server on Target Machine
 
 1. Move the `SwapsterDist` folder to the target machine.
-2. Run `SwapsterDist\installer.bat` as Administrator (it self-elevates if needed).
+2. Run `SwapsterDist\install_swapster.cmd` (it self-elevates if needed).
 
 Installer actions:
 - Copies server to `%ProgramData%\Swapster\swapster.exe`
-- Creates scheduled task `Swapster` (run on logon)
-- Creates scheduled task `Swapster_Unlock` (run on unlock event 4801)
+- Creates scheduled task `Swapster_Server_OnStartup` (SYSTEM, run at startup)
 - Adds Windows Firewall allow rules:
   - **TCP port 2003**: For encrypted client communication
   - **UDP port 2003**: For broadcast discovery
@@ -68,7 +69,7 @@ controller.exe
 
 The controller searches for Swapster servers on the local network by:
 1. Broadcasting `SWAPSTER_DISCOVER` on UDP port 2003 to all network adapters
-2. Listening for `SWAPSTER_HERE` response from the server
+2. Listening for `SWAPSTER_READY`/`SWAPSTER_BUSY` responses from servers
 3. Automatically connecting to the first server that responds
 
 Direct connect:
@@ -86,7 +87,7 @@ Commands after connection:
 
 When `TERM` is sent:
 - Server launches cleanup mode
-- Deletes scheduled tasks (`Swapster`, `Swapster_Unlock`)
+- Deletes scheduled task (`Swapster_Server_OnStartup`)
 - Removes Windows Firewall rules (TCP and UDP)
 - Stops other running `swapster.exe` instances
 - Deletes the currently running server executable path
@@ -113,6 +114,6 @@ If auto-discovery fails to find the server:
 
 - **Multi-adapter Support**: Controller automatically tries all network adapters, prioritizing real adapters (with gateways) over virtual ones
 - **Encryption**: All commands use AES-256-CTR encryption with HMAC-SHA256 authentication after initial handshake
-- The installer expects `swapster.exe` to be in the same folder as `installer.bat` when run
+- The installer expects `swapster.exe` to be in the same folder as `install_swapster.cmd`/`install_swapster.ps1` when run
 - The installer can be run from a USB drive
 - If multiple Swapster servers are on the same LAN, auto-discovery connects to the first one that responds
