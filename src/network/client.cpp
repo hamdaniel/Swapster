@@ -3,8 +3,10 @@
 #include <winsock2.h>
 #include <iphlpapi.h>
 #include <ws2tcpip.h>
+#include <conio.h>
 
 #include <cstdint>
+#include <cctype>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -40,6 +42,12 @@ struct DiscoveryResult {
   DiscoveryStatus status = DiscoveryStatus::NotFound;
   std::string server_ip;
   std::string message;
+};
+
+enum class InputStatus {
+  LineReady,
+  ServerTimeout,
+  ServerDisconnected
 };
 
 static void enable_ansi_colors() {
@@ -353,6 +361,70 @@ static SOCKET connect_to(const char* ip, int port, int* wsa_error = nullptr) {
   return sock;
 }
 
+static InputStatus read_line_with_server_watch(CryptoChannel& channel,
+                                               SOCKET socket,
+                                               std::string& line_out) {
+  line_out.clear();
+
+  while (true) {
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(socket, &readfds);
+
+    timeval tv{};
+    tv.tv_sec = 0;
+    tv.tv_usec = 100 * 1000;
+
+    int ready = select(0, &readfds, nullptr, nullptr, &tv);
+    if (ready == SOCKET_ERROR) {
+      return InputStatus::ServerDisconnected;
+    }
+
+    if (ready > 0 && FD_ISSET(socket, &readfds)) {
+      std::vector<uint8_t> response_payload;
+      if (!channel.recv_msg(socket, response_payload)) {
+        return InputStatus::ServerDisconnected;
+      }
+
+      std::string response(response_payload.begin(), response_payload.end());
+      if (response == kTimeoutReply) {
+        return InputStatus::ServerTimeout;
+      }
+
+      // Any unsolicited message means server state changed; surface it and stop.
+      std::cout << "\n" << response << "\n";
+      return InputStatus::ServerDisconnected;
+    }
+
+    while (_kbhit()) {
+      int ch = _getch();
+
+      if (ch == 0 || ch == 224) {
+        (void)_getch();
+        continue;
+      }
+
+      if (ch == '\r') {
+        std::cout << "\n";
+        return InputStatus::LineReady;
+      }
+
+      if (ch == '\b') {
+        if (!line_out.empty()) {
+          line_out.pop_back();
+          std::cout << "\b \b";
+        }
+        continue;
+      }
+
+      if (std::isprint(static_cast<unsigned char>(ch))) {
+        line_out.push_back(static_cast<char>(ch));
+        std::cout << static_cast<char>(ch);
+      }
+    }
+  }
+}
+
 static void print_welcome() {
   std::cout << "\x1b[38;2;255;232;31m";
   std::cout << R"SWAPSTER_BANNER(
@@ -460,7 +532,17 @@ int main(int argc, char** argv) {
     print_welcome();
 
     std::string line;
-    while (std::getline(std::cin, line)) {
+    while (true) {
+      InputStatus input_status = read_line_with_server_watch(channel, socket, line);
+      if (input_status == InputStatus::ServerTimeout) {
+        std::cout << "Server timed out after 1 minute of inactivity.\n";
+        break;
+      }
+      if (input_status == InputStatus::ServerDisconnected) {
+        std::cerr << "Server disconnected\n";
+        break;
+      }
+
       if (line == "EXIT") {
         break;
       }
@@ -468,7 +550,15 @@ int main(int argc, char** argv) {
       if (line == "TERM") {
         std::cout << "Are you sure you want to stop the server? It will be unavailable until the computer is restarted. Type 'YES' to confirm: ";
         std::string confirm;
-        std::getline(std::cin, confirm);
+        InputStatus confirm_status = read_line_with_server_watch(channel, socket, confirm);
+        if (confirm_status == InputStatus::ServerTimeout) {
+          std::cout << "Server timed out after 1 minute of inactivity.\n";
+          break;
+        }
+        if (confirm_status == InputStatus::ServerDisconnected) {
+          std::cerr << "Server disconnected\n";
+          break;
+        }
         if (confirm != "YES") {
           std::cout << "Termination cancelled.\n";
           continue;
@@ -478,7 +568,15 @@ int main(int argc, char** argv) {
       if (line == "WIPE") {
         std::cout << "This will remove swapster files, firewall rules, and startup task. Type 'YES' to confirm: ";
         std::string confirm;
-        std::getline(std::cin, confirm);
+        InputStatus confirm_status = read_line_with_server_watch(channel, socket, confirm);
+        if (confirm_status == InputStatus::ServerTimeout) {
+          std::cout << "Server timed out after 1 minute of inactivity.\n";
+          break;
+        }
+        if (confirm_status == InputStatus::ServerDisconnected) {
+          std::cerr << "Server disconnected\n";
+          break;
+        }
         if (confirm != "YES") {
           std::cout << "Cleanup cancelled.\n";
           continue;
