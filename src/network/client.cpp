@@ -369,6 +369,7 @@ Type commands and press Enter.
 SWAP: Swap the contents of the displays in the target computer
 EXIT: Disconnect from target computer and exit controller
 TERM: Stop the server on the target computer
+WIPE: Uninstall swapster from the target computer
 ================================================================================================
 )SWAPSTER_BANNER";
   std::cout << "\x1b[0m";
@@ -464,11 +465,21 @@ int main(int argc, char** argv) {
       }
 
       if (line == "TERM") {
-        std::cout << "Are you sure you want to kill swapster? Type 'YES' to confirm: ";
+        std::cout << "Are you sure you want to stop the server? It will be unavailable until the computer is restarted. Type 'YES' to confirm: ";
         std::string confirm;
         std::getline(std::cin, confirm);
         if (confirm != "YES") {
           std::cout << "Termination cancelled.\n";
+          continue;
+        }
+      }
+
+      if (line == "WIPE") {
+        std::cout << "This will remove swapster files, firewall rules, and startup task. Type 'YES' to confirm: ";
+        std::string confirm;
+        std::getline(std::cin, confirm);
+        if (confirm != "YES") {
+          std::cout << "Cleanup cancelled.\n";
           continue;
         }
       }
@@ -495,6 +506,11 @@ int main(int argc, char** argv) {
 
       if (line == "TERM") {
         std::cout << "Termination command acknowledged. Exiting controller.\n";
+        break;
+      }
+
+      if (line == "WIPE") {
+        std::cout << "Cleanup command acknowledged. Exiting controller.\n";
         break;
       }
     }

@@ -5,6 +5,7 @@
 #include <mswsock.h>
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -22,6 +23,8 @@ constexpr const char kDiscoveryRequest[] = "SWAPSTER_DISCOVER";
 constexpr const char kDiscoveryReady[] = "SWAPSTER_READY";
 constexpr const char kDiscoveryBusy[] = "SWAPSTER_BUSY";
 constexpr const char kTimeoutReply[] = "TIMEOUT";
+constexpr const char kTaskName[] = "Swapster_Server_OnStartup";
+constexpr const char kInstallDir[] = "C:\\ProgramData\\Swapster";
 constexpr int kDiscoveryPollMs = 250;
 constexpr int kAcceptTimeoutMs = 10000;
 constexpr int kIdleTimeoutMs = 60 * 1000;
@@ -166,6 +169,36 @@ static bool send_text_reply(CryptoChannel& channel, SOCKET sock, const char* tex
   return channel.send_msg(sock, payload);
 }
 
+static void run_cleanup_async() {
+  std::string deleteTask = "schtasks /Delete /TN \"" + std::string(kTaskName) + "\" /F >nul 2>&1";
+  std::system(deleteTask.c_str());
+  std::system("netsh advfirewall firewall delete rule name=\"Swapster Server\" >nul 2>&1");
+  std::system("netsh advfirewall firewall delete rule name=\"Swapster Discovery\" >nul 2>&1");
+
+  std::string cmd = "cmd /C ping 127.0.0.1 -n 3 >nul & rmdir /S /Q \"" + std::string(kInstallDir) + "\" >nul 2>&1";
+
+  STARTUPINFOA si{};
+  PROCESS_INFORMATION pi{};
+  si.cb = sizeof(si);
+  CreateProcessA(nullptr,
+                 const_cast<char*>(cmd.c_str()),
+                 nullptr,
+                 nullptr,
+                 FALSE,
+                 CREATE_NO_WINDOW | DETACHED_PROCESS,
+                 nullptr,
+                 nullptr,
+                 &si,
+                 &pi);
+
+  if (pi.hProcess) {
+    CloseHandle(pi.hProcess);
+  }
+  if (pi.hThread) {
+    CloseHandle(pi.hThread);
+  }
+}
+
 static void session_thread(SOCKET listener,
                            std::atomic<bool>& shutdown_requested,
                            std::atomic<bool>& session_active,
@@ -212,6 +245,11 @@ static void session_thread(SOCKET listener,
       send_text_reply(channel, client, "Windows swapped successfully");
     } else if (message == "TERM") {
       send_text_reply(channel, client, "Server shutting down");
+      shutdown_requested.store(true);
+      break;
+    } else if (message == "WIPE") {
+      send_text_reply(channel, client, "Cleanup started");
+      run_cleanup_async();
       shutdown_requested.store(true);
       break;
     } else {
