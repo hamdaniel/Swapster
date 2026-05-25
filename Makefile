@@ -27,7 +27,6 @@ SCRIPTS_DIR := scripts
 
 ENC_O        := $(OBJ_DIR)/encryption.o
 SWAP_O       := $(OBJ_DIR)/swapping.o
-LAN_O        := $(OBJ_DIR)/lan.o
 
 # Installer output
 DIST_DIR := SwapsterDist
@@ -61,10 +60,6 @@ $(ENC_O): $(SRC_DIR)/logic/encryption.cpp $(INC_DIR)/encryption.h $(OBJ_DIR)
 # swapping.o
 $(SWAP_O): $(SRC_DIR)/logic/swapping.cpp $(INC_DIR)/swapping.h $(INC_DIR)/encryption.h $(OBJ_DIR)
 	$(CXX) $(SWAP_CXXFLAGS) $(INCLUDE_FLAGS) -c $(SRC_DIR)/logic/swapping.cpp -o $(SWAP_O)
-
-# lan.o
-$(LAN_O): $(SRC_DIR)/network/lan.cpp $(INC_DIR)/lan.h $(OBJ_DIR)
-	$(CXX) $(CLNT_CXXFLAGS) $(INCLUDE_FLAGS) -c $(SRC_DIR)/network/lan.cpp -o $(LAN_O)
 
 # server version resource -> .o
 $(SWAPSTER_VER_O): $(SWAPSTER_RC) $(OBJ_DIR)

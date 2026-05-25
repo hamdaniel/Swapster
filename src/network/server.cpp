@@ -45,15 +45,6 @@ static bool load_recvmsg_fn(SOCKET sock, LPFN_WSARECVMSG& recvmsg_fn) {
                   &bytes, nullptr, nullptr) != SOCKET_ERROR;
 }
 
-static std::string sockaddr_to_ip(const sockaddr_in& addr) {
-  char buffer[32]{};
-  const char* text = inet_ntop(AF_INET, &addr.sin_addr, buffer, sizeof(buffer));
-  if (!text) {
-    return std::string();
-  }
-  return std::string(text);
-}
-
 static bool receive_discovery_packet(SOCKET sock, LPFN_WSARECVMSG recvmsg_fn, DiscoveryPacket& packet) {
   packet.payload.clear();
   packet.local_ip.clear();
@@ -115,7 +106,7 @@ static bool send_udp_reply(SOCKET udp_sock, const sockaddr_in& client, const cha
   return sent != SOCKET_ERROR;
 }
 
-static SOCKET create_tcp_listener(const std::string& local_ip, int port) {
+static SOCKET create_tcp_listener(int port) {
   SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (sock == INVALID_SOCKET) {
     return INVALID_SOCKET;
@@ -330,8 +321,6 @@ int main(int argc, char** argv) {
   std::atomic<bool> session_active{false};
   std::atomic<bool> awaiting_accept{false};
   std::atomic<bool> session_established{false};
-  std::atomic<u_long> pending_client_addr{0};
-
   while (!shutdown_requested.load()) {
     DiscoveryPacket packet;
     if (!receive_discovery_packet(udp_sock, recvmsg_fn, packet)) {
@@ -359,13 +348,12 @@ int main(int argc, char** argv) {
       continue;
     }
 
-    SOCKET listener = create_tcp_listener(packet.local_ip, port);
+    SOCKET listener = create_tcp_listener(port);
     if (listener == INVALID_SOCKET) {
       send_udp_reply(udp_sock, packet.sender, kDiscoveryBusy);
       continue;
     }
 
-    pending_client_addr.store(packet.sender.sin_addr.s_addr);
     session_active.store(true);
     awaiting_accept.store(true);
     std::thread(session_thread, listener,
